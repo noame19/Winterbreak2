@@ -60,7 +60,7 @@
             }
         </style>
     </head>
-    <body>
+    <body onload="loaded()">
         <canvas id="canvas"></canvas>
         <div class="outer">
             <div class="inner">
@@ -77,14 +77,17 @@
                 document.getElementById("log").innerHTML += "<br>" + payload + "\n";
             }
 
-            log("Getting da button");
-            const button = document.getElementById("button");
-            log("Setting filename");
-            button.setAttribute("download", `\x3Cscript>(window.kindle||top.kindle).messaging.sendMessage("com.lab126.pillow","customDialog",{name:"../../../../mnt/us/winterbreak2/dialoger"})\x3C/script>Winterbreak2.mobi`);
-            log("Setting href");
-            button.setAttribute("href", document.getElementById("canvas").toDataURL());
-            log("Showing button");
-            button.style = "";
+            function loaded()
+            {
+                log("Getting da button");
+                const button = document.getElementById("button");
+                log("Setting filename");
+                button.setAttribute("download", `\x3Cscript>(window.kindle||top.kindle).messaging.sendMessage("com.lab126.pillow","customDialog",{name:"../../../../mnt/us/winterbreak2/dialoger"})\x3C/script>Winterbreak2.mobi`);
+                log("Setting href");
+                button.setAttribute("href", document.getElementById("canvas").toDataURL());
+                log("Showing button");
+                button.style = "";
+            }
         </script>
     </body>
 </html>
