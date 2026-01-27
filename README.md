@@ -1,5 +1,7 @@
 # Winterbreak2
 
+This branch was an experiment for a fully local variant of WB2, and does not work.
+
 > [!NOTE]
 > This only works on firmwares below 5.16.4, made if mesquito is being problematic.
 
