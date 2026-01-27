@@ -64,7 +64,7 @@
         <canvas id="canvas"></canvas>
         <div class="outer">
             <div class="inner">
-                <h1>Winterbreak2</h1>
+                <h1>Winterbreak2<p style="display: inline; font-size: 0.75em;">.1</p></h1>
                 <p>By Scam.Net, Penguins184</p>
                 <a style="display: none;" id="button">Jailbreak</a>
                 <p id="log">Log:</p>
@@ -74,7 +74,8 @@
         <script>
             function log(payload)
             {
-                document.getElementById("log").innerHTML += "<br>" + payload + "\n";
+                const old = document.getElementById("log").innerHTML;
+                document.getElementById("log").innerHTML = old + "<br>" + payload + "\n";
             }
 
             function loaded()
