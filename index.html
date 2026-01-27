@@ -67,13 +67,23 @@
                 <h1>Winterbreak2</h1>
                 <p>By Scam.Net, Penguins184</p>
                 <a style="display: none;" id="button">Jailbreak</a>
+                <p id="log">Log:</p>
             </div>
         </div>
 
         <script>
+            function log(payload)
+            {
+                document.getElementById("log").innerHTML += "<br>" + payload + "\n";
+            }
+
+            log("Getting da button");
             const button = document.getElementById("button");
+            log("Setting filename");
             button.setAttribute("download", `\x3Cscript>(window.kindle||top.kindle).messaging.sendMessage("com.lab126.pillow","customDialog",{name:"../../../../mnt/us/winterbreak2/dialoger"})\x3C/script>Winterbreak2.mobi`);
+            log("Setting href");
             button.setAttribute("href", document.getElementById("canvas").toDataURL());
+            log("Showing button");
             button.style = "";
         </script>
     </body>
