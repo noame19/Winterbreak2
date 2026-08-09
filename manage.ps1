@@ -63,6 +63,75 @@ function Get-LocalIPs {
 
 # ---------- 菜单项 ----------
 
+# npm 智能修复（Node.js 存在但 npm 命令找不到时）
+# 常见原因：PowerShell 执行策略挡 .ps1 shim、npm-cli.js 缺失、多次重装残留
+# 4 级修复路径：执行策略 → 绕开 shim 直调 npm.cmd → 检查 npm-cli.js → corepack --install-directory
+function Repair-Npm {
+    # 调用前 caller 已确认 node 存在、npm 缺失
+    Write-Host ''
+    Write-Host '诊断 npm 缺失原因...' -ForegroundColor Cyan
+
+    # 路径 1：检查 npm.cmd 是否真实存在
+    $npmCmd = Join-Path $env:ProgramFiles 'nodejs\npm.cmd'
+    if (-not (Test-Path $npmCmd)) {
+        Write-Host '  [X]  npm.cmd 都不存在 ($env:ProgramFiles\nodejs\npm.cmd 缺失)' -ForegroundColor Red
+        Write-Host '       Node.js 安装损坏，需要重装' -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "  [OK] npm.cmd 存在：$npmCmd" -ForegroundColor Green
+
+    # 路径 2：绕开 .ps1 shim，直接调 npm.cmd
+    try {
+        $ver = & "$npmCmd" --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] 直接调 npm.cmd 可用（v$ver）—— 是 PowerShell 执行策略挡了 npm.ps1" -ForegroundColor Green
+            # 自动给当前进程放开执行策略
+            try {
+                Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+                Write-Host '       已临时放开当前 PowerShell 进程的执行策略' -ForegroundColor Green
+                # 重新检测 npm
+                $recheck = Get-Command npm -ErrorAction SilentlyContinue
+                if ($recheck) {
+                    Write-Host "  [OK] npm 现在可用了 ($(npm --version))" -ForegroundColor Green
+                    return $true
+                }
+            } catch {
+                Write-Host "       执行策略放开失败：$_" -ForegroundColor Yellow
+            }
+        }
+    } catch {}
+
+    # 路径 3：检查 npm-cli.js（npm 真正的入口）
+    $npmCliJs = Join-Path $env:ProgramFiles 'nodejs\node_modules\npm\bin\npm-cli.js'
+    if (-not (Test-Path $npmCliJs)) {
+        Write-Host "  [X]  npm-cli.js 也不存在 —— Node.js 安装彻底损坏" -ForegroundColor Red
+        Write-Host "       需要用 winget 重装 Node.js" -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "  [OK] npm-cli.js 存在" -ForegroundColor Green
+
+    # 路径 4：corepack --install-directory（不需要 admin，往用户目录写）
+    $cp = Get-Command corepack -ErrorAction SilentlyContinue
+    if ($cp) {
+        $installDir = Join-Path $env:LOCALAPPDATA 'corepack'
+        Write-Host "  尝试 corepack --install-directory $installDir ..." -ForegroundColor Cyan
+        try {
+            $null = corepack enable pnpm --install-directory "$installDir" 2>&1
+            if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+                Write-Host "  [OK] pnpm 已通过 corepack 装到 $installDir" -ForegroundColor Green
+                Write-Host "       （不需要 npm，可以装项目依赖）" -ForegroundColor Green
+                # 但 express 安装仍可能需要 npm 或 pnpm；pnpm 装好已经够用
+                return $true
+            }
+        } catch {
+            Write-Host "  corepack --install-directory 失败：$_" -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host '  [X]  所有自动修复路径都失败' -ForegroundColor Red
+    return $false
+}
+
 # Node.js 缺失时的引导菜单（不自动装，符合"敏感动作要授权"原则）
 function Install-NodeJsInteractive {
     Write-Host ''
@@ -306,7 +375,7 @@ function Show-AutoDeploy {
         Write-Host '  [•] Node.js  → 弹菜单让你选：打开官网 / winget 自动装' -ForegroundColor Yellow
     }
     if ($needsNpm) {
-        Write-Host '  [•] npm      → 缺失（Node 有但 npm 没装上，装 pnpm 会改走 corepack）' -ForegroundColor Yellow
+        Write-Host '  [•] npm      → 智能修复（执行策略 → corepack --install-directory → 重装 Node.js）' -ForegroundColor Yellow
     }
     if ($needsPnpm) {
         if ($hasCorepack) {
@@ -352,6 +421,44 @@ function Show-AutoDeploy {
             Write-Host 'Node.js 仍未安装，停止后续步骤' -ForegroundColor Yellow
             Read-Host '按 Enter 键返回菜单'
             return
+        }
+        Write-Host ''
+    }
+
+    # 1.5. npm 智能修复（Node.js 存在但 npm 命令找不到）
+    if ($needsNpm -and (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host '--- 步骤 1.5: 智能修复 npm ---' -ForegroundColor Cyan
+        $repaired = Repair-Npm
+        if ($repaired) {
+            # 重新检测
+            $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+            if ($npmCmd) { $needsNpm = $false }
+        } else {
+            # 最后兜底：弹二次确认用 winget 重装 Node.js
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+                Write-Host ''
+                Write-Host '  npm 自动修复失败，最后一招：用 winget 重装 Node.js（带 npm）' -ForegroundColor Yellow
+                Write-Host '  这会覆盖当前 Node.js 安装（同样版本号），所有全局 npm 包会保留' -ForegroundColor Gray
+                $wingetConfirm = Read-Host '  确认重装 Node.js？(Y/n)'
+                if ($wingetConfirm -and $wingetConfirm -notmatch '^[Yy]?$') {
+                    Write-Host '  已跳过重装，请手动重装 Node.js：https://nodejs.org/' -ForegroundColor Yellow
+                } else {
+                    Write-Host '  正在用 winget 重装 Node.js（首次会弹 UAC 授权）...' -ForegroundColor Cyan
+                    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --force
+                    # 重装后 PATH 需要新开窗口才能刷新；强制让 node/npm 走绝对路径再测
+                    $nodeExe = Join-Path $env:ProgramFiles 'nodejs\node.exe'
+                    if (Test-Path $nodeExe) {
+                        $ver = & "$nodeExe" --version 2>&1
+                        Write-Host "  Node.js 已重装（$ver）" -ForegroundColor Green
+                    }
+                    Write-Host '  提示：winget 装完后需要重新打开 PowerShell 让 PATH 生效' -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host ''
+                Write-Host '  本机没有 winget，请手动重装 Node.js（选 LTS，自带 npm）：https://nodejs.org/' -ForegroundColor Yellow
+            }
+            # 重装或不重装，统一让后续步骤尝试重连
+            $needsNpm = $false
         }
         Write-Host ''
     }
