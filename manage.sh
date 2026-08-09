@@ -181,7 +181,6 @@ action_status() {
     # 6. 端口
     local port
     port=$(get_port)
-    echo -e "  ${GRAY}i${NC}  当前端口      ${YELLOW}$port${NC}"
     if is_port_free "$port"; then
         echo -e "  ${GREEN}✓${NC} 端口空闲      $port 可绑定"
     else
