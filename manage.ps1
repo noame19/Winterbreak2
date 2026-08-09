@@ -118,7 +118,31 @@ function Show-Status {
         Write-Host '  [X]  Node.js       未安装' -ForegroundColor Red
     }
 
-    # 2. pnpm
+    # 2. npm（Node.js 通常自带，但部分安装方式可能缺失 npm）
+    if ($node) {
+        $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+        if ($npmCmd) {
+            Write-Host "  [OK] npm           $(npm --version)" -ForegroundColor Green
+        } else {
+            Write-Host '  [!]  npm           未安装（Node.js 存在但 npm 缺失，装包会走 corepack 兜底）' -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host '  [-]  npm           （跳过：Node.js 缺失）' -ForegroundColor Gray
+    }
+
+    # 3. corepack（Node 16.9+ 内置，不依赖 npm 也能装 pnpm）
+    if ($node) {
+        $cp = Get-Command corepack -ErrorAction SilentlyContinue
+        if ($cp) {
+            Write-Host '  [i]  corepack      已可用（兜底包管理器安装）' -ForegroundColor Gray
+        } else {
+            Write-Host '  [i]  corepack      不可用（Node 版本过低或 corepack 被禁用，装 pnpm 需用 npm）' -ForegroundColor Gray
+        }
+    } else {
+        Write-Host '  [-]  corepack      （跳过：Node.js 缺失）' -ForegroundColor Gray
+    }
+
+    # 4. pnpm
     if ($node) {
         $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
         if ($pnpm) {
@@ -130,7 +154,7 @@ function Show-Status {
         Write-Host '  [-]  pnpm          （跳过：Node.js 缺失）' -ForegroundColor Gray
     }
 
-    # 3. express
+    # 5. express
     if ($node) {
         $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
         if (Test-Path $expressPath) {
@@ -143,7 +167,7 @@ function Show-Status {
         Write-Host '  [-]  express       （跳过：Node.js 缺失）' -ForegroundColor Gray
     }
 
-    # 4. 入口文件
+    # 6. 入口文件
     $indexPath = Join-Path $ScriptDir 'api\index.js'
     if (Test-Path $indexPath) {
         Write-Host '  [OK] 入口文件      api\index.js' -ForegroundColor Green
@@ -151,7 +175,7 @@ function Show-Status {
         Write-Host '  [X]  入口文件      缺失（无法自动修复）' -ForegroundColor Red
     }
 
-    # 5. 资源目录
+    # 7. 资源目录
     $mobiPath = Join-Path $ScriptDir 'assets\placeholder.mobi'
     if (Test-Path $mobiPath) {
         $mobiSize = (Get-Item $mobiPath).Length
@@ -160,7 +184,7 @@ function Show-Status {
         Write-Host '  [X]  资源目录      缺失（无法自动修复）' -ForegroundColor Red
     }
 
-    # 6. 端口
+    # 8. 端口
     if (Test-PortFree (Get-Port)) {
         $port = Get-Port
         Write-Host "  [OK] 端口空闲      $port 可绑定" -ForegroundColor Green
@@ -169,7 +193,7 @@ function Show-Status {
         Write-Host "  [X]  端口被占用    $port 已被其他程序占用" -ForegroundColor Red
     }
 
-    # 7. .env
+    # 9. .env
     if (Test-Path $EnvFile) {
         Write-Host "  [i]  端口配置      .env（已存在）" -ForegroundColor Gray
     } else {
@@ -188,12 +212,14 @@ function Show-AutoDeploy {
     Write-Host ''
 
     $needsNode = $false
+    $needsNpm = $false
     $needsPnpm = $false
     $needsExpress = $false
     $needsIndex = $false
     $needsAssets = $false
+    $hasCorepack = $false
 
-    # Node.js
+    # 1. Node.js
     $node = Get-Command node -ErrorAction SilentlyContinue
     if ($node) {
         Write-Host "  [OK] Node.js       $(node --version)" -ForegroundColor Green
@@ -202,8 +228,24 @@ function Show-AutoDeploy {
         $needsNode = $true
     }
 
-    # pnpm / express
+    # 2. npm + corepack + pnpm / express
     if (-not $needsNode) {
+        # npm（Node.js 通常自带，但可能缺失）
+        $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+        if ($npmCmd) {
+            Write-Host "  [OK] npm           $(npm --version)" -ForegroundColor Green
+        } else {
+            Write-Host '  [!]  npm           未安装（Node.js 有但 npm 缺失）' -ForegroundColor Yellow
+            $needsNpm = $true
+        }
+
+        # corepack（Node 16.9+ 内置）
+        $cp = Get-Command corepack -ErrorAction SilentlyContinue
+        if ($cp) {
+            $hasCorepack = $true
+        }
+
+        # pnpm
         $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
         if ($pnpm) {
             Write-Host "  [OK] pnpm          $(pnpm --version)" -ForegroundColor Green
@@ -212,6 +254,7 @@ function Show-AutoDeploy {
             $needsPnpm = $true
         }
 
+        # express
         $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
         if (Test-Path $expressPath) {
             $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
@@ -221,6 +264,8 @@ function Show-AutoDeploy {
             $needsExpress = $true
         }
     } else {
+        Write-Host '  [-]  npm           （跳过：Node.js 缺失）' -ForegroundColor Gray
+        Write-Host '  [-]  corepack      （跳过：Node.js 缺失）' -ForegroundColor Gray
         Write-Host '  [-]  pnpm          （跳过：Node.js 缺失）' -ForegroundColor Gray
         Write-Host '  [-]  express       （跳过：Node.js 缺失）' -ForegroundColor Gray
     }
@@ -260,11 +305,20 @@ function Show-AutoDeploy {
     if ($needsNode) {
         Write-Host '  [•] Node.js  → 弹菜单让你选：打开官网 / winget 自动装' -ForegroundColor Yellow
     }
+    if ($needsNpm) {
+        Write-Host '  [•] npm      → 缺失（Node 有但 npm 没装上，装 pnpm 会改走 corepack）' -ForegroundColor Yellow
+    }
     if ($needsPnpm) {
-        Write-Host '  [•] pnpm     → 自动 npm install -g pnpm' -ForegroundColor Yellow
+        if ($hasCorepack) {
+            Write-Host '  [•] pnpm     → 自动 corepack prepare pnpm@latest --activate' -ForegroundColor Yellow
+        } elseif ($npmCmd) {
+            Write-Host '  [•] pnpm     → 自动 npm install -g pnpm' -ForegroundColor Yellow
+        } else {
+            Write-Host '  [•] pnpm     → 无法自动装（缺 corepack 也缺 npm），需手动装 Node.js' -ForegroundColor Red
+        }
     }
     if ($needsExpress) {
-        Write-Host '  [•] express  → 自动 pnpm install（fallback npm install）' -ForegroundColor Yellow
+        Write-Host '  [•] express  → 自动 pnpm install（兜底 npm install）' -ForegroundColor Yellow
     }
     if ($needsIndex) {
         Write-Host '  [•] 入口文件 → 无法自动修复（请 git pull 或重新 fork）' -ForegroundColor Red
@@ -284,13 +338,16 @@ function Show-AutoDeploy {
 
     Write-Host ''
 
-    # 1. Node.js（敏感动作）
+    # 1. Node.js
     if ($needsNode) {
         Write-Host '--- 步骤 1: Node.js ---' -ForegroundColor Cyan
         Install-NodeJsInteractive
         $node = Get-Command node -ErrorAction SilentlyContinue
         if ($node) {
             Write-Host "Node.js 已可用 ($(node --version))" -ForegroundColor Green
+            # 重新检测 npm 和 corepack（Node 装完后可能有了）
+            if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { $needsNpm = $true } else { $needsNpm = $false }
+            if (Get-Command corepack -ErrorAction SilentlyContinue) { $hasCorepack = $true }
         } else {
             Write-Host 'Node.js 仍未安装，停止后续步骤' -ForegroundColor Yellow
             Read-Host '按 Enter 键返回菜单'
@@ -299,55 +356,101 @@ function Show-AutoDeploy {
         Write-Host ''
     }
 
-    # 2. pnpm
+    # 2. pnpm（双路径：corepack 优先，npm 兜底）
     if ($needsPnpm) {
         Write-Host '--- 步骤: pnpm ---' -ForegroundColor Cyan
-        $npm = Get-Command npm -ErrorAction SilentlyContinue
-        if ($npm) {
+        $pnpmInstalled = $false
+
+        # 路径 A：corepack（Node 16.9+ 内置，不依赖 npm）
+        $cp = Get-Command corepack -ErrorAction SilentlyContinue
+        if ($cp) {
             try {
-                $null = npm install -g pnpm 2>&1
+                Write-Host '  尝试 corepack 安装...' -ForegroundColor Gray
+                $null = corepack prepare pnpm@latest --activate 2>&1
                 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-                    Write-Host "pnpm 已自动安装 ($(pnpm --version))" -ForegroundColor Green
-                } else {
-                    Write-Host 'pnpm 自动安装失败（请手动 npm install -g pnpm）' -ForegroundColor Red
+                    Write-Host "  [OK] pnpm 已通过 corepack 安装 ($(pnpm --version))" -ForegroundColor Green
+                    $pnpmInstalled = $true
                 }
             } catch {
-                Write-Host "pnpm 自动安装失败：$_" -ForegroundColor Red
+                Write-Host "  corepack 失败：$_" -ForegroundColor Yellow
             }
-        } else {
-            Write-Host 'npm 也不存在，无法自动装 pnpm' -ForegroundColor Red
+        }
+
+        # 路径 B：npm（传统方式）
+        if (-not $pnpmInstalled) {
+            $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+            if ($npmCmd) {
+                try {
+                    Write-Host '  尝试 npm 安装...' -ForegroundColor Gray
+                    $null = npm install -g pnpm 2>&1
+                    if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+                        Write-Host "  [OK] pnpm 已通过 npm 安装 ($(pnpm --version))" -ForegroundColor Green
+                        $pnpmInstalled = $true
+                    }
+                } catch {
+                    $errMsg = "$_"
+                    if ($errMsg -match 'EACCES|EPERM|permission') {
+                        Write-Host '  [X]  权限不足，无法全局安装 pnpm' -ForegroundColor Red
+                        Write-Host '       请在终端手动执行（可能需要 sudo）：' -ForegroundColor Yellow
+                    } else {
+                        Write-Host "  [X]  npm 安装 pnpm 失败：$errMsg" -ForegroundColor Red
+                    }
+                }
+            }
+        }
+
+        # 最终还是没装上
+        if (-not $pnpmInstalled) {
+            Write-Host '  [X]  pnpm 自动安装失败，请手动执行以下任一命令：' -ForegroundColor Red
+            Write-Host '        corepack prepare pnpm@latest --activate' -ForegroundColor Cyan
+            Write-Host '        npm install -g pnpm' -ForegroundColor Cyan
+            Write-Host '        或重装 Node.js（自带 npm）：https://nodejs.org/' -ForegroundColor Cyan
         }
         Write-Host ''
     }
 
-    # 3. express
+    # 3. express（三路径：pnpm → npm → corepack→pnpm）
     if ($needsExpress) {
         Write-Host '--- 步骤: express ---' -ForegroundColor Cyan
-        $useNpm = $false
-        $pm = Get-Command pnpm -ErrorAction SilentlyContinue
-        if (-not $pm) {
-            $pm = Get-Command npm -ErrorAction SilentlyContinue
-            $useNpm = $true
-        }
-        if ($pm) {
+        $expressInstalled = $false
+
+        $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
+        $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+
+        if ($pnpmCmd) {
             try {
-                if ($useNpm) {
-                    $null = npm install 2>&1
-                } else {
-                    $null = pnpm install 2>&1
-                }
+                Write-Host '  尝试 pnpm install...' -ForegroundColor Gray
+                $null = pnpm install 2>&1
                 $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
                 if (Test-Path $expressPath) {
                     $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
-                    Write-Host "express 已自动安装 ($expressVer)" -ForegroundColor Green
-                } else {
-                    Write-Host 'express 安装后仍找不到，请看上面的报错' -ForegroundColor Red
+                    Write-Host "  [OK] express 已安装 ($expressVer，通过 pnpm)" -ForegroundColor Green
+                    $expressInstalled = $true
                 }
             } catch {
-                Write-Host "express 安装失败：$_" -ForegroundColor Red
+                Write-Host "  pnpm install 失败：$_" -ForegroundColor Yellow
             }
-        } else {
-            Write-Host '无包管理器可用' -ForegroundColor Red
+        }
+
+        if (-not $expressInstalled -and $npmCmd) {
+            try {
+                Write-Host '  尝试 npm install...' -ForegroundColor Gray
+                $null = npm install 2>&1
+                $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
+                if (Test-Path $expressPath) {
+                    $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
+                    Write-Host "  [OK] express 已安装 ($expressVer，通过 npm)" -ForegroundColor Green
+                    $expressInstalled = $true
+                }
+            } catch {
+                Write-Host "  npm install 失败：$_" -ForegroundColor Yellow
+            }
+        }
+
+        if (-not $expressInstalled) {
+            Write-Host '  [X]  express 安装失败，请手动执行：' -ForegroundColor Red
+            Write-Host '        cd 到项目目录后，运行 pnpm install（或 npm install）' -ForegroundColor Cyan
+            Write-Host '        如 pnpm/npm 都不在，先执行：corepack prepare pnpm@latest --activate' -ForegroundColor Cyan
         }
         Write-Host ''
     }
@@ -471,11 +574,38 @@ function Start-Service {
     Write-Host '3 秒后启动...（按 Ctrl+C 取消）' -ForegroundColor Gray
     Start-Sleep -Seconds 3
 
-    # 依赖兜底
+    # 依赖兜底：node_modules 缺失或损坏时自动安装
     $nmPath = Join-Path $ScriptDir 'node_modules'
-    if (-not (Test-Path $nmPath)) {
-        Write-Host '检测到 node_modules 缺失，自动执行 npm install...' -ForegroundColor Red
-        npm install
+    $expressPkg = Join-Path $nmPath 'express\package.json'
+    if (-not (Test-Path $expressPkg)) {
+        Write-Host '检测到依赖缺失，自动安装...' -ForegroundColor Yellow
+
+        $installed = $false
+        $pm = Get-Command pnpm -ErrorAction SilentlyContinue
+        if ($pm) {
+            try { $null = pnpm install 2>&1; if (Test-Path $expressPkg) { $installed = $true; Write-Host '已通过 pnpm 安装依赖' -ForegroundColor Green } } catch {}
+        }
+        if (-not $installed) {
+            $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+            if ($npmCmd) {
+                try { $null = npm install 2>&1; if (Test-Path $expressPkg) { $installed = $true; Write-Host '已通过 npm 安装依赖' -ForegroundColor Green } } catch {}
+            }
+        }
+        if (-not $installed) {
+            $cp = Get-Command corepack -ErrorAction SilentlyContinue
+            if ($cp) {
+                try {
+                    $null = corepack prepare pnpm@latest --activate 2>&1
+                    $null = pnpm install 2>&1
+                    if (Test-Path $expressPkg) { $installed = $true; Write-Host '已通过 corepack→pnpm 安装依赖' -ForegroundColor Green }
+                } catch {}
+            }
+        }
+        if (-not $installed) {
+            Write-Host '依赖安装失败，请手动在项目目录执行 pnpm install 或 npm install' -ForegroundColor Red
+            Read-Host '按 Enter 键退出'
+            return
+        }
     }
 
     # 前台启动 node；关闭 PowerShell 窗口 = 关闭 node 进程 = 端口释放

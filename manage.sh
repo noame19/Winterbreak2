@@ -138,7 +138,29 @@ action_status() {
         echo -e "  ${RED}✗${NC} Node.js       未安装"
     fi
 
-    # 2. pnpm
+    # 2. npm（Node.js 通常自带，但部分安装方式可能缺失 npm）
+    if command -v node >/dev/null 2>&1; then
+        if command -v npm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} npm           $(npm --version)"
+        else
+            echo -e "  ${YELLOW}!${NC} npm           未安装（Node.js 存在但 npm 缺失，装包会走 corepack 兜底）"
+        fi
+    else
+        echo -e "  ${GRAY}-${NC} npm           （跳过：Node.js 缺失）"
+    fi
+
+    # 3. corepack（Node 16.9+ 内置，不依赖 npm 也能装 pnpm）
+    if command -v node >/dev/null 2>&1; then
+        if command -v corepack >/dev/null 2>&1; then
+            echo -e "  ${GRAY}i${NC}  corepack      已可用（兜底包管理器安装）"
+        else
+            echo -e "  ${GRAY}i${NC}  corepack      不可用（Node 版本过低或 corepack 被禁用，装 pnpm 需用 npm）"
+        fi
+    else
+        echo -e "  ${GRAY}-${NC} corepack      （跳过：Node.js 缺失）"
+    fi
+
+    # 4. pnpm
     if command -v node >/dev/null 2>&1; then
         if command -v pnpm >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} pnpm          $(pnpm --version)"
@@ -149,7 +171,7 @@ action_status() {
         echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
     fi
 
-    # 3. express
+    # 5. express
     if command -v node >/dev/null 2>&1; then
         if [ -d "node_modules" ] && [ -f "node_modules/express/package.json" ]; then
             local expr_v
@@ -162,14 +184,14 @@ action_status() {
         echo -e "  ${GRAY}-${NC} express       （跳过：Node.js 缺失）"
     fi
 
-    # 4. 入口文件
+    # 6. 入口文件
     if [ -f "api/index.js" ]; then
         echo -e "  ${GREEN}✓${NC} 入口文件      api/index.js"
     else
         echo -e "  ${RED}✗${NC} 入口文件      缺失（无法自动修复）"
     fi
 
-    # 5. 资源目录
+    # 7. 资源目录
     if [ -d "assets" ]; then
         local mobi_size
         mobi_size=$(stat -c '%s' "assets/placeholder.mobi" 2>/dev/null || stat -f '%z' "assets/placeholder.mobi" 2>/dev/null || echo "?")
@@ -178,7 +200,7 @@ action_status() {
         echo -e "  ${RED}✗${NC} 资源目录      缺失（无法自动修复）"
     fi
 
-    # 6. 端口
+    # 8. 端口
     local port
     port=$(get_port)
     if is_port_free "$port"; then
@@ -187,7 +209,7 @@ action_status() {
         echo -e "  ${RED}✗${NC} 端口被占用    $port 已被其他程序占用"
     fi
 
-    # 7. .env
+    # 9. .env
     if [ -f "$ENV_FILE" ]; then
         echo -e "  ${GRAY}i${NC}  端口配置      ${BLUE}$ENV_FILE${NC}（已存在）"
     else
@@ -206,11 +228,14 @@ action_auto_deploy() {
     echo ""
 
     local needs_node=false
+    local needs_npm=false
     local needs_pnpm=false
     local needs_express=false
     local needs_index=false
     local needs_assets=false
+    local has_corepack=false
 
+    # 1. Node.js
     if command -v node >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} Node.js       $(node --version)"
     else
@@ -218,7 +243,22 @@ action_auto_deploy() {
         needs_node=true
     fi
 
+    # 2. npm + corepack + pnpm + express
     if [ "$needs_node" = false ]; then
+        # npm（Node.js 通常自带，但可能缺失）
+        if command -v npm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} npm           $(npm --version)"
+        else
+            echo -e "  ${YELLOW}!${NC} npm           未安装（Node.js 存在但 npm 缺失）"
+            needs_npm=true
+        fi
+
+        # corepack（Node 16.9+ 内置）
+        if command -v corepack >/dev/null 2>&1; then
+            has_corepack=true
+        fi
+
+        # pnpm
         if command -v pnpm >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} pnpm          $(pnpm --version)"
         else
@@ -226,6 +266,7 @@ action_auto_deploy() {
             needs_pnpm=true
         fi
 
+        # express
         if [ -d "node_modules" ] && [ -f "node_modules/express/package.json" ]; then
             local expr_v
             expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
@@ -235,6 +276,8 @@ action_auto_deploy() {
             needs_express=true
         fi
     else
+        echo -e "  ${GRAY}-${NC} npm           （跳过：Node.js 缺失）"
+        echo -e "  ${GRAY}-${NC} corepack      （跳过：Node.js 缺失）"
         echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
         echo -e "  ${GRAY}-${NC} express       （跳过：Node.js 缺失）"
     fi
@@ -271,11 +314,20 @@ action_auto_deploy() {
     if [ "$needs_node" = true ]; then
         echo -e "  ${YELLOW}•${NC} Node.js  → 弹菜单让你选：打开官网 / winget 自动装"
     fi
+    if [ "$needs_npm" = true ]; then
+        echo -e "  ${YELLOW}•${NC} npm      → 缺失（Node 有但 npm 没装上，装 pnpm 会改走 corepack）"
+    fi
     if [ "$needs_pnpm" = true ]; then
-        echo -e "  ${YELLOW}•${NC} pnpm     → 自动 npm install -g pnpm"
+        if [ "$has_corepack" = true ]; then
+            echo -e "  ${YELLOW}•${NC} pnpm     → 自动 corepack prepare pnpm@latest --activate"
+        elif command -v npm >/dev/null 2>&1; then
+            echo -e "  ${YELLOW}•${NC} pnpm     → 自动 npm install -g pnpm"
+        else
+            echo -e "  ${RED}•${NC} pnpm     → 无法自动装（缺 corepack 也缺 npm），需手动装 Node.js"
+        fi
     fi
     if [ "$needs_express" = true ]; then
-        echo -e "  ${YELLOW}•${NC} express  → 自动 pnpm install（fallback npm install）"
+        echo -e "  ${YELLOW}•${NC} express  → 自动 pnpm install（兜底 npm install）"
     fi
     if [ "$needs_index" = true ]; then
         echo -e "  ${RED}•${NC} 入口文件 → ${RED}无法自动修复${NC}（请 git pull 或重新 fork）"
@@ -295,12 +347,15 @@ action_auto_deploy() {
 
     echo ""
 
-    # 1. Node.js（敏感动作）
+    # 1. Node.js
     if [ "$needs_node" = true ]; then
         echo -e "${CYAN}--- 步骤 1: Node.js ---${NC}"
         action_install_node
         if command -v node >/dev/null 2>&1; then
             echo -e "${GREEN}✓ Node.js 已可用 ($(node --version))${NC}"
+            # 重新检测 npm 和 corepack（Node 装完后可能有了）
+            command -v npm >/dev/null 2>&1 && needs_npm=false || needs_npm=true
+            command -v corepack >/dev/null 2>&1 && has_corepack=true
         else
             echo -e "${YELLOW}! Node.js 仍未安装，停止后续步骤${NC}"
             press_enter
@@ -309,42 +364,87 @@ action_auto_deploy() {
         echo ""
     fi
 
-    # 2. pnpm
+    # 2. pnpm（双路径：corepack 优先，npm 兜底）
     if [ "$needs_pnpm" = true ]; then
         echo -e "${CYAN}--- 步骤: pnpm ---${NC}"
-        if command -v npm >/dev/null 2>&1; then
-            if npm install -g pnpm >/dev/null 2>&1; then
-                echo -e "${GREEN}✓ pnpm 已自动安装 ($(pnpm --version))${NC}"
+        local pnpm_installed=false
+
+        # 路径 A：corepack（Node 16.9+ 内置，不依赖 npm）
+        if command -v corepack >/dev/null 2>&1; then
+            echo -e "${GRAY}  尝试 corepack 安装...${NC}"
+            if corepack prepare pnpm@latest --activate >/dev/null 2>&1; then
+                if command -v pnpm >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓ pnpm 已通过 corepack 安装 ($(pnpm --version))${NC}"
+                    pnpm_installed=true
+                fi
             else
-                echo -e "${RED}✗ pnpm 自动安装失败（请手动 npm install -g pnpm）${NC}"
+                echo -e "${YELLOW}  corepack 失败${NC}"
             fi
-        else
-            echo -e "${RED}✗ npm 也不存在，无法自动装 pnpm${NC}"
+        fi
+
+        # 路径 B：npm（传统方式，需要 npm）
+        if [ "$pnpm_installed" = false ]; then
+            if command -v npm >/dev/null 2>&1; then
+                echo -e "${GRAY}  尝试 npm 安装...${NC}"
+                local npm_err
+                npm_err=$(npm install -g pnpm 2>&1) || true
+                if command -v pnpm >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓ pnpm 已通过 npm 安装 ($(pnpm --version))${NC}"
+                    pnpm_installed=true
+                else
+                    if echo "$npm_err" | grep -qiE 'EACCES|EPERM|permission'; then
+                        echo -e "${RED}✗ 权限不足，无法全局安装 pnpm${NC}"
+                        echo -e "       请在终端手动执行（可能需要 sudo）："
+                    else
+                        echo -e "${RED}✗ npm 安装 pnpm 失败：${npm_err}${NC}"
+                    fi
+                fi
+            fi
+        fi
+
+        # 最终还是没装上
+        if [ "$pnpm_installed" = false ]; then
+            echo -e "  ${RED}✗ pnpm 自动安装失败，请手动执行以下任一命令：${NC}"
+            echo -e "        ${CYAN}corepack prepare pnpm@latest --activate${NC}"
+            echo -e "        ${CYAN}npm install -g pnpm${NC}"
+            echo -e "        或重装 Node.js（自带 npm）：${BLUE}https://nodejs.org/${NC}"
         fi
         echo ""
     fi
 
-    # 3. express
+    # 3. express（三路径：pnpm → npm → corepack→pnpm）
     if [ "$needs_express" = true ]; then
         echo -e "${CYAN}--- 步骤: express ---${NC}"
+        local express_installed=false
+
         if command -v pnpm >/dev/null 2>&1; then
+            echo -e "${GRAY}  尝试 pnpm install...${NC}"
             if pnpm install >/dev/null 2>&1; then
                 local expr_v
                 expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
-                echo -e "${GREEN}✓ express 已自动安装 ($expr_v)${NC}"
+                echo -e "${GREEN}✓ express 已安装 ($expr_v，通过 pnpm)${NC}"
+                express_installed=true
             else
-                echo -e "${RED}✗ pnpm install 失败${NC}"
+                echo -e "${YELLOW}  pnpm install 失败${NC}"
             fi
-        elif command -v npm >/dev/null 2>&1; then
+        fi
+
+        if [ "$express_installed" = false ] && command -v npm >/dev/null 2>&1; then
+            echo -e "${GRAY}  尝试 npm install...${NC}"
             if npm install >/dev/null 2>&1; then
                 local expr_v
                 expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
-                echo -e "${GREEN}✓ express 已自动安装 (用 npm, $expr_v)${NC}"
+                echo -e "${GREEN}✓ express 已安装 ($expr_v，通过 npm)${NC}"
+                express_installed=true
             else
-                echo -e "${RED}✗ npm install 失败${NC}"
+                echo -e "${YELLOW}  npm install 失败${NC}"
             fi
-        else
-            echo -e "${RED}✗ 无包管理器可用${NC}"
+        fi
+
+        if [ "$express_installed" = false ]; then
+            echo -e "  ${RED}✗ express 安装失败，请手动执行：${NC}"
+            echo -e "        ${CYAN}cd 到项目目录后，运行 pnpm install（或 npm install）${NC}"
+            echo -e "        如 pnpm/npm 都不在，先执行：${CYAN}corepack prepare pnpm@latest --activate${NC}"
         fi
         echo ""
     fi
@@ -426,10 +526,29 @@ action_run() {
     echo -e "${GRAY}3 秒后启动...（按 Ctrl+C 取消）${NC}"
     sleep 3
 
-    # 依赖兜底：万一没装
-    if [ ! -d "node_modules" ]; then
-        echo -e "${RED}检测到 node_modules 缺失，自动执行 npm install...${NC}"
-        npm install
+    # 依赖兜底：node_modules 缺失或损坏时自动安装
+    if [ ! -d "node_modules" ] || [ ! -f "node_modules/express/package.json" ]; then
+        echo -e "${YELLOW}检测到依赖缺失，自动安装...${NC}"
+
+        local installed=false
+        if command -v pnpm >/dev/null 2>&1; then
+            pnpm install >/dev/null 2>&1 && installed=true
+            [ "$installed" = true ] && echo -e "${GREEN}已通过 pnpm 安装依赖${NC}"
+        fi
+        if [ "$installed" = false ] && command -v npm >/dev/null 2>&1; then
+            npm install >/dev/null 2>&1 && installed=true
+            [ "$installed" = true ] && echo -e "${GREEN}已通过 npm 安装依赖${NC}"
+        fi
+        if [ "$installed" = false ] && command -v corepack >/dev/null 2>&1; then
+            corepack prepare pnpm@latest --activate >/dev/null 2>&1 && \
+            pnpm install >/dev/null 2>&1 && installed=true
+            [ "$installed" = true ] && echo -e "${GREEN}已通过 corepack→pnpm 安装依赖${NC}"
+        fi
+        if [ "$installed" = false ]; then
+            echo -e "${RED}依赖安装失败，请手动在项目目录执行 pnpm install 或 npm install${NC}"
+            read -rp "按 Enter 键退出..." _
+            exit 1
+        fi
     fi
 
     # 前台启动 node；exec 让 bash 进程被 node 替换，
