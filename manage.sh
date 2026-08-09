@@ -112,79 +112,49 @@ action_install_node() {
     esac
 }
 
-action_deploy() {
-    clear
-    echo -e "${CYAN}===== 自动部署 + 状态检查 =====${NC}"
+action_status() {
+    # 纯只读状态检查（脚本启动时自动跑，不阻塞）
+    echo -e "${CYAN}===== 部署状态检查 =====${NC}"
     echo ""
 
-    # 1. Node.js —— 不自动装，缺失时弹菜单引导
+    # 1. Node.js
     if command -v node >/dev/null 2>&1; then
         local node_v
         node_v=$(node --version)
         echo -e "  ${GREEN}✓${NC} Node.js       $node_v"
     else
         echo -e "  ${RED}✗${NC} Node.js       未安装"
-        action_install_node
-        if command -v node >/dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} Node.js       $(node --version)（已安装）"
-        else
-            echo -e "  ${YELLOW}!${NC} Node.js       仍缺失（后续步骤跳过 node 相关检查）"
-        fi
     fi
 
-    # 只有装了 node 才继续检查依赖
+    # 2. pnpm
     if command -v node >/dev/null 2>&1; then
-        # 2. pnpm —— 缺失时自动用 npm 装（轻量、安全）
         if command -v pnpm >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} pnpm          $(pnpm --version)"
         else
-            echo -e "  ${YELLOW}!${NC} pnpm          未安装，尝试用 npm 自动装..."
-            if command -v npm >/dev/null 2>&1; then
-                if npm install -g pnpm >/dev/null 2>&1; then
-                    echo -e "  ${GREEN}✓${NC} pnpm          已自动安装 $(pnpm --version)"
-                else
-                    echo -e "  ${RED}✗${NC} pnpm          自动安装失败（请手动 npm install -g pnpm）"
-                fi
-            else
-                echo -e "  ${RED}✗${NC} pnpm          npm 也不存在，无法自动装"
-            fi
+            echo -e "  ${RED}✗${NC} pnpm          未安装"
         fi
+    else
+        echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
+    fi
 
-        # 3. 项目依赖（express）—— 缺失时自动装
+    # 3. express
+    if command -v node >/dev/null 2>&1; then
         if [ -d "node_modules" ] && [ -f "node_modules/express/package.json" ]; then
             local expr_v
             expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
             echo -e "  ${GREEN}✓${NC} express       $expr_v"
         else
-            echo -e "  ${YELLOW}!${NC} express       未安装，尝试自动安装..."
-            if command -v pnpm >/dev/null 2>&1; then
-                if pnpm install >/dev/null 2>&1; then
-                    expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
-                    echo -e "  ${GREEN}✓${NC} express       已自动安装 ($expr_v)"
-                else
-                    echo -e "  ${RED}✗${NC} express       pnpm install 失败"
-                fi
-            elif command -v npm >/dev/null 2>&1; then
-                if npm install >/dev/null 2>&1; then
-                    expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
-                    echo -e "  ${GREEN}✓${NC} express       已自动安装 (用 npm, $expr_v)"
-                else
-                    echo -e "  ${RED}✗${NC} express       npm install 失败"
-                fi
-            else
-                echo -e "  ${RED}✗${NC} express       无包管理器可用"
-            fi
+            echo -e "  ${RED}✗${NC} express       未安装"
         fi
     else
-        echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
         echo -e "  ${GRAY}-${NC} express       （跳过：Node.js 缺失）"
     fi
 
-    # 4. 入口文件 —— 不能自动修
+    # 4. 入口文件
     if [ -f "api/index.js" ]; then
         echo -e "  ${GREEN}✓${NC} 入口文件      api/index.js"
     else
-        echo -e "  ${RED}✗${NC} 入口文件      缺失（请 git pull 或重新 fork）"
+        echo -e "  ${RED}✗${NC} 入口文件      缺失（无法自动修复）"
     fi
 
     # 5. 资源目录
@@ -193,22 +163,20 @@ action_deploy() {
         mobi_size=$(stat -c '%s' "assets/placeholder.mobi" 2>/dev/null || stat -f '%z' "assets/placeholder.mobi" 2>/dev/null || echo "?")
         echo -e "  ${GREEN}✓${NC} 资源目录      assets/ (placeholder.mobi = ${mobi_size} 字节)"
     else
-        echo -e "  ${RED}✗${NC} 资源目录      缺失（请 git pull 或重新 fork）"
+        echo -e "  ${RED}✗${NC} 资源目录      缺失（无法自动修复）"
     fi
 
-    # 6. 端口信息
+    # 6. 端口
     local port
     port=$(get_port)
     echo -e "  ${GRAY}i${NC}  当前端口      ${YELLOW}$port${NC}"
-
-    # 7. 端口可用性
     if is_port_free "$port"; then
         echo -e "  ${GREEN}✓${NC} 端口空闲      $port 可绑定"
     else
-        echo -e "  ${RED}✗${NC} 端口被占用    $port 已被其他程序占用（请用 [2] 改端口）"
+        echo -e "  ${RED}✗${NC} 端口被占用    $port 已被其他程序占用"
     fi
 
-    # 8. .env 状态
+    # 7. .env
     if [ -f "$ENV_FILE" ]; then
         echo -e "  ${GRAY}i${NC}  端口配置      ${BLUE}$ENV_FILE${NC}（已存在）"
     else
@@ -216,7 +184,163 @@ action_deploy() {
     fi
 
     echo ""
-    echo -e "${CYAN}======================${NC}"
+}
+
+action_auto_deploy() {
+    # 列出缺失项 → 二次确认 → 逐项装
+    clear
+    echo -e "${CYAN}===== 自动部署 =====${NC}"
+    echo ""
+    echo -e "${GRAY}正在扫描缺失组件...${NC}"
+    echo ""
+
+    local needs_node=false
+    local needs_pnpm=false
+    local needs_express=false
+    local needs_index=false
+    local needs_assets=false
+
+    if command -v node >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Node.js       $(node --version)"
+    else
+        echo -e "  ${RED}✗${NC} Node.js       未安装"
+        needs_node=true
+    fi
+
+    if [ "$needs_node" = false ]; then
+        if command -v pnpm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} pnpm          $(pnpm --version)"
+        else
+            echo -e "  ${RED}✗${NC} pnpm          未安装"
+            needs_pnpm=true
+        fi
+
+        if [ -d "node_modules" ] && [ -f "node_modules/express/package.json" ]; then
+            local expr_v
+            expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+            echo -e "  ${GREEN}✓${NC} express       $expr_v"
+        else
+            echo -e "  ${RED}✗${NC} express       未安装"
+            needs_express=true
+        fi
+    else
+        echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
+        echo -e "  ${GRAY}-${NC} express       （跳过：Node.js 缺失）"
+    fi
+
+    if [ -f "api/index.js" ]; then
+        echo -e "  ${GREEN}✓${NC} 入口文件      api/index.js"
+    else
+        echo -e "  ${RED}✗${NC} 入口文件      缺失"
+        needs_index=true
+    fi
+
+    if [ -d "assets" ]; then
+        local mobi_size
+        mobi_size=$(stat -c '%s' "assets/placeholder.mobi" 2>/dev/null || stat -f '%z' "assets/placeholder.mobi" 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}✓${NC} 资源目录      assets/ (placeholder.mobi = ${mobi_size} 字节)"
+    else
+        echo -e "  ${RED}✗${NC} 资源目录      缺失"
+        needs_assets=true
+    fi
+
+    echo ""
+
+    # 没有缺失项就直接返回
+    if [ "$needs_node" = false ] && [ "$needs_pnpm" = false ] && [ "$needs_express" = false ] && [ "$needs_index" = false ] && [ "$needs_assets" = false ]; then
+        echo -e "${GREEN}所有组件都已就绪，无需部署。${NC}"
+        echo ""
+        press_enter
+        return
+    fi
+
+    # 列出可执行的部署动作
+    echo -e "${YELLOW}待部署项：${NC}"
+    echo ""
+    if [ "$needs_node" = true ]; then
+        echo -e "  ${YELLOW}•${NC} Node.js  → 弹菜单让你选：打开官网 / winget 自动装"
+    fi
+    if [ "$needs_pnpm" = true ]; then
+        echo -e "  ${YELLOW}•${NC} pnpm     → 自动 npm install -g pnpm"
+    fi
+    if [ "$needs_express" = true ]; then
+        echo -e "  ${YELLOW}•${NC} express  → 自动 pnpm install（fallback npm install）"
+    fi
+    if [ "$needs_index" = true ]; then
+        echo -e "  ${RED}•${NC} 入口文件 → ${RED}无法自动修复${NC}（请 git pull 或重新 fork）"
+    fi
+    if [ "$needs_assets" = true ]; then
+        echo -e "  ${RED}•${NC} 资源目录 → ${RED}无法自动修复${NC}（请 git pull 或重新 fork）"
+    fi
+
+    echo ""
+    echo -e "${YELLOW}确认开始部署？(Y/n)${NC}"
+    read -rp "" confirm
+    if [[ ! "$confirm" =~ ^[Yy]?$ ]] && [ -n "$confirm" ]; then
+        echo -e "${YELLOW}已取消部署${NC}"
+        press_enter
+        return
+    fi
+
+    echo ""
+
+    # 1. Node.js（敏感动作）
+    if [ "$needs_node" = true ]; then
+        echo -e "${CYAN}--- 步骤 1: Node.js ---${NC}"
+        action_install_node
+        if command -v node >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Node.js 已可用 ($(node --version))${NC}"
+        else
+            echo -e "${YELLOW}! Node.js 仍未安装，停止后续步骤${NC}"
+            press_enter
+            return
+        fi
+        echo ""
+    fi
+
+    # 2. pnpm
+    if [ "$needs_pnpm" = true ]; then
+        echo -e "${CYAN}--- 步骤: pnpm ---${NC}"
+        if command -v npm >/dev/null 2>&1; then
+            if npm install -g pnpm >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ pnpm 已自动安装 ($(pnpm --version))${NC}"
+            else
+                echo -e "${RED}✗ pnpm 自动安装失败（请手动 npm install -g pnpm）${NC}"
+            fi
+        else
+            echo -e "${RED}✗ npm 也不存在，无法自动装 pnpm${NC}"
+        fi
+        echo ""
+    fi
+
+    # 3. express
+    if [ "$needs_express" = true ]; then
+        echo -e "${CYAN}--- 步骤: express ---${NC}"
+        if command -v pnpm >/dev/null 2>&1; then
+            if pnpm install >/dev/null 2>&1; then
+                local expr_v
+                expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+                echo -e "${GREEN}✓ express 已自动安装 ($expr_v)${NC}"
+            else
+                echo -e "${RED}✗ pnpm install 失败${NC}"
+            fi
+        elif command -v npm >/dev/null 2>&1; then
+            if npm install >/dev/null 2>&1; then
+                local expr_v
+                expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+                echo -e "${GREEN}✓ express 已自动安装 (用 npm, $expr_v)${NC}"
+            else
+                echo -e "${RED}✗ npm install 失败${NC}"
+            fi
+        else
+            echo -e "${RED}✗ 无包管理器可用${NC}"
+        fi
+        echo ""
+    fi
+
+    echo -e "${CYAN}=== 部署完成，最新状态： ===${NC}"
+    echo ""
+    action_status
     press_enter
 }
 
@@ -289,17 +413,19 @@ action_run() {
     exec node api/index.js
 }
 
+# ---------- 启动时自动跑一次状态检查（只读、不阻塞） ----------
+action_status
+
 # ---------- 主菜单 ----------
 
 while true; do
-    clear
     port=$(get_port)
     echo -e "${CYAN}=================================${NC}"
     echo -e "${CYAN}  Winterbreak2 一键管理脚本${NC}"
     echo -e "${CYAN}=================================${NC}"
     echo -e "  当前端口：${YELLOW}$port${NC}"
     echo ""
-    echo "  [1] 部署状态检查"
+    echo "  [1] 自动部署（缺啥列出来，确认后再装）"
     echo "  [2] 修改运行端口"
     echo "  [3] 运行（前台启动，关闭窗口即关服务）"
     echo "  [0] 退出"
@@ -307,7 +433,7 @@ while true; do
     read -rp "请选择 [0-3]: " choice
 
     case "$choice" in
-        1) action_deploy ;;
+        1) action_auto_deploy ;;
         2) action_change_port ;;
         3) action_run ;;
         0) echo "Bye!"; exit 0 ;;

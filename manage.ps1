@@ -90,96 +90,51 @@ function Install-NodeJsInteractive {
     }
 }
 
-function Show-Deploy {
-    Clear-Host
-    Write-Host '===== 自动部署 + 状态检查 =====' -ForegroundColor Cyan
+function Show-Status {
+    # 纯只读状态检查（脚本启动时自动跑，不阻塞）
+    Write-Host '===== 部署状态检查 =====' -ForegroundColor Cyan
     Write-Host ''
 
-    # 1. Node.js —— 不自动装，缺失时弹菜单引导
+    # 1. Node.js
     $node = Get-Command node -ErrorAction SilentlyContinue
     if ($node) {
         $nodeVer = node --version
         Write-Host "  [OK] Node.js       $nodeVer" -ForegroundColor Green
     } else {
         Write-Host '  [X]  Node.js       未安装' -ForegroundColor Red
-        Install-NodeJsInteractive
-        $node = Get-Command node -ErrorAction SilentlyContinue
-        if ($node) {
-            Write-Host "  [OK] Node.js       $(node --version)（已安装）" -ForegroundColor Green
-        } else {
-            Write-Host '  [!]  Node.js       仍缺失（后续步骤跳过 node 相关检查）' -ForegroundColor Yellow
-        }
     }
 
-    # 只有装了 node 才继续检查依赖
+    # 2. pnpm
     if ($node) {
-        # 2. pnpm —— 缺失时自动用 npm 装（轻量、安全）
         $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
         if ($pnpm) {
             Write-Host "  [OK] pnpm          $(pnpm --version)" -ForegroundColor Green
         } else {
-            Write-Host '  [!]  pnpm          未安装，尝试用 npm 自动装...' -ForegroundColor Yellow
-            $npm = Get-Command npm -ErrorAction SilentlyContinue
-            if ($npm) {
-                try {
-                    $null = npm install -g pnpm 2>&1
-                    if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-                        Write-Host "  [OK] pnpm          已自动安装 $(pnpm --version)" -ForegroundColor Green
-                    } else {
-                        Write-Host '  [X]  pnpm          自动安装失败（请手动 npm install -g pnpm）' -ForegroundColor Red
-                    }
-                } catch {
-                    Write-Host "  [X]  pnpm          自动安装失败：$_" -ForegroundColor Red
-                }
-            } else {
-                Write-Host '  [X]  pnpm          npm 也不存在，无法自动装' -ForegroundColor Red
-            }
+            Write-Host '  [X]  pnpm          未安装' -ForegroundColor Red
         }
+    } else {
+        Write-Host '  [-]  pnpm          （跳过：Node.js 缺失）' -ForegroundColor Gray
+    }
 
-        # 3. 项目依赖（express）—— 缺失时自动装
+    # 3. express
+    if ($node) {
         $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
         if (Test-Path $expressPath) {
             $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
             Write-Host "  [OK] express       $expressVer" -ForegroundColor Green
         } else {
-            Write-Host '  [!]  express       未安装，尝试自动安装...' -ForegroundColor Yellow
-            $useNpm = $false
-            $pm = Get-Command pnpm -ErrorAction SilentlyContinue
-            if (-not $pm) {
-                $pm = Get-Command npm -ErrorAction SilentlyContinue
-                $useNpm = $true
-            }
-            if ($pm) {
-                try {
-                    if ($useNpm) {
-                        $null = npm install 2>&1
-                    } else {
-                        $null = pnpm install 2>&1
-                    }
-                    if (Test-Path $expressPath) {
-                        $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
-                        Write-Host "  [OK] express       已自动安装 ($expressVer)" -ForegroundColor Green
-                    } else {
-                        Write-Host '  [X]  express       安装后仍找不到，请看上面的报错' -ForegroundColor Red
-                    }
-                } catch {
-                    Write-Host "  [X]  express       安装失败：$_" -ForegroundColor Red
-                }
-            } else {
-                Write-Host '  [X]  express       无包管理器可用，无法自动装' -ForegroundColor Red
-            }
+            Write-Host '  [X]  express       未安装' -ForegroundColor Red
         }
     } else {
-        Write-Host '  [-]  pnpm          （跳过：Node.js 缺失）' -ForegroundColor Gray
         Write-Host '  [-]  express       （跳过：Node.js 缺失）' -ForegroundColor Gray
     }
 
-    # 4. 入口文件 —— 不能自动修
+    # 4. 入口文件
     $indexPath = Join-Path $ScriptDir 'api\index.js'
     if (Test-Path $indexPath) {
         Write-Host '  [OK] 入口文件      api\index.js' -ForegroundColor Green
     } else {
-        Write-Host '  [X]  入口文件      缺失（请 git pull 或重新 fork）' -ForegroundColor Red
+        Write-Host '  [X]  入口文件      缺失（无法自动修复）' -ForegroundColor Red
     }
 
     # 5. 资源目录
@@ -188,7 +143,7 @@ function Show-Deploy {
         $mobiSize = (Get-Item $mobiPath).Length
         Write-Host "  [OK] 资源目录      assets\ (placeholder.mobi = $mobiSize 字节)" -ForegroundColor Green
     } else {
-        Write-Host '  [X]  资源目录      缺失（请 git pull 或重新 fork）' -ForegroundColor Red
+        Write-Host '  [X]  资源目录      缺失（无法自动修复）' -ForegroundColor Red
     }
 
     # 6. 端口
@@ -197,7 +152,7 @@ function Show-Deploy {
     if (Test-PortFree $port) {
         Write-Host "  [OK] 端口空闲      $port 可绑定" -ForegroundColor Green
     } else {
-        Write-Host "  [X]  端口被占用    $port 已被其他程序占用（请用 [2] 改端口）" -ForegroundColor Red
+        Write-Host "  [X]  端口被占用    $port 已被其他程序占用" -ForegroundColor Red
     }
 
     # 7. .env
@@ -208,7 +163,184 @@ function Show-Deploy {
     }
 
     Write-Host ''
-    Write-Host '======================' -ForegroundColor Cyan
+}
+
+function Show-AutoDeploy {
+    # 列出缺失项 → 二次确认 → 逐项装
+    Clear-Host
+    Write-Host '===== 自动部署 =====' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '正在扫描缺失组件...' -ForegroundColor Gray
+    Write-Host ''
+
+    $needsNode = $false
+    $needsPnpm = $false
+    $needsExpress = $false
+    $needsIndex = $false
+    $needsAssets = $false
+
+    # Node.js
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if ($node) {
+        Write-Host "  [OK] Node.js       $(node --version)" -ForegroundColor Green
+    } else {
+        Write-Host '  [X]  Node.js       未安装' -ForegroundColor Red
+        $needsNode = $true
+    }
+
+    # pnpm / express
+    if (-not $needsNode) {
+        $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+        if ($pnpm) {
+            Write-Host "  [OK] pnpm          $(pnpm --version)" -ForegroundColor Green
+        } else {
+            Write-Host '  [X]  pnpm          未安装' -ForegroundColor Red
+            $needsPnpm = $true
+        }
+
+        $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
+        if (Test-Path $expressPath) {
+            $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
+            Write-Host "  [OK] express       $expressVer" -ForegroundColor Green
+        } else {
+            Write-Host '  [X]  express       未安装' -ForegroundColor Red
+            $needsExpress = $true
+        }
+    } else {
+        Write-Host '  [-]  pnpm          （跳过：Node.js 缺失）' -ForegroundColor Gray
+        Write-Host '  [-]  express       （跳过：Node.js 缺失）' -ForegroundColor Gray
+    }
+
+    # 入口文件
+    $indexPath = Join-Path $ScriptDir 'api\index.js'
+    if (Test-Path $indexPath) {
+        Write-Host '  [OK] 入口文件      api\index.js' -ForegroundColor Green
+    } else {
+        Write-Host '  [X]  入口文件      缺失' -ForegroundColor Red
+        $needsIndex = $true
+    }
+
+    # 资源目录
+    $mobiPath = Join-Path $ScriptDir 'assets\placeholder.mobi'
+    if (Test-Path $mobiPath) {
+        $mobiSize = (Get-Item $mobiPath).Length
+        Write-Host "  [OK] 资源目录      assets\ (placeholder.mobi = $mobiSize 字节)" -ForegroundColor Green
+    } else {
+        Write-Host '  [X]  资源目录      缺失' -ForegroundColor Red
+        $needsAssets = $true
+    }
+
+    Write-Host ''
+
+    # 没有缺失项
+    if (-not $needsNode -and -not $needsPnpm -and -not $needsExpress -and -not $needsIndex -and -not $needsAssets) {
+        Write-Host '所有组件都已就绪，无需部署。' -ForegroundColor Green
+        Write-Host ''
+        Read-Host '按 Enter 键返回菜单'
+        return
+    }
+
+    # 列出可执行的部署动作
+    Write-Host '待部署项：' -ForegroundColor Yellow
+    Write-Host ''
+    if ($needsNode) {
+        Write-Host '  [•] Node.js  → 弹菜单让你选：打开官网 / winget 自动装' -ForegroundColor Yellow
+    }
+    if ($needsPnpm) {
+        Write-Host '  [•] pnpm     → 自动 npm install -g pnpm' -ForegroundColor Yellow
+    }
+    if ($needsExpress) {
+        Write-Host '  [•] express  → 自动 pnpm install（fallback npm install）' -ForegroundColor Yellow
+    }
+    if ($needsIndex) {
+        Write-Host '  [•] 入口文件 → 无法自动修复（请 git pull 或重新 fork）' -ForegroundColor Red
+    }
+    if ($needsAssets) {
+        Write-Host '  [•] 资源目录 → 无法自动修复（请 git pull 或重新 fork）' -ForegroundColor Red
+    }
+
+    Write-Host ''
+    Write-Host '确认开始部署？(Y/n)' -ForegroundColor Yellow
+    $confirm = Read-Host ''
+    if ($confirm -and $confirm -notmatch '^[Yy]?$') {
+        Write-Host '已取消部署' -ForegroundColor Yellow
+        Read-Host '按 Enter 键返回菜单'
+        return
+    }
+
+    Write-Host ''
+
+    # 1. Node.js（敏感动作）
+    if ($needsNode) {
+        Write-Host '--- 步骤 1: Node.js ---' -ForegroundColor Cyan
+        Install-NodeJsInteractive
+        $node = Get-Command node -ErrorAction SilentlyContinue
+        if ($node) {
+            Write-Host "Node.js 已可用 ($(node --version))" -ForegroundColor Green
+        } else {
+            Write-Host 'Node.js 仍未安装，停止后续步骤' -ForegroundColor Yellow
+            Read-Host '按 Enter 键返回菜单'
+            return
+        }
+        Write-Host ''
+    }
+
+    # 2. pnpm
+    if ($needsPnpm) {
+        Write-Host '--- 步骤: pnpm ---' -ForegroundColor Cyan
+        $npm = Get-Command npm -ErrorAction SilentlyContinue
+        if ($npm) {
+            try {
+                $null = npm install -g pnpm 2>&1
+                if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+                    Write-Host "pnpm 已自动安装 ($(pnpm --version))" -ForegroundColor Green
+                } else {
+                    Write-Host 'pnpm 自动安装失败（请手动 npm install -g pnpm）' -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "pnpm 自动安装失败：$_" -ForegroundColor Red
+            }
+        } else {
+            Write-Host 'npm 也不存在，无法自动装 pnpm' -ForegroundColor Red
+        }
+        Write-Host ''
+    }
+
+    # 3. express
+    if ($needsExpress) {
+        Write-Host '--- 步骤: express ---' -ForegroundColor Cyan
+        $useNpm = $false
+        $pm = Get-Command pnpm -ErrorAction SilentlyContinue
+        if (-not $pm) {
+            $pm = Get-Command npm -ErrorAction SilentlyContinue
+            $useNpm = $true
+        }
+        if ($pm) {
+            try {
+                if ($useNpm) {
+                    $null = npm install 2>&1
+                } else {
+                    $null = pnpm install 2>&1
+                }
+                $expressPath = Join-Path $ScriptDir 'node_modules\express\package.json'
+                if (Test-Path $expressPath) {
+                    $expressVer = (Get-Content $expressPath -Raw | ConvertFrom-Json).version
+                    Write-Host "express 已自动安装 ($expressVer)" -ForegroundColor Green
+                } else {
+                    Write-Host 'express 安装后仍找不到，请看上面的报错' -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "express 安装失败：$_" -ForegroundColor Red
+            }
+        } else {
+            Write-Host '无包管理器可用' -ForegroundColor Red
+        }
+        Write-Host ''
+    }
+
+    Write-Host '=== 部署完成，最新状态： ===' -ForegroundColor Cyan
+    Write-Host ''
+    Show-Status
     Read-Host '按 Enter 键返回菜单'
 }
 
@@ -284,15 +416,17 @@ function Start-Service {
 
 if ($MyInvocation.InvocationName -eq $MyInvocation.MyCommand.Path -or
     $MyInvocation.InvocationName -eq '&') {
+    # 启动时自动跑一次状态检查（只读、不阻塞）
+    Show-Status
+
     while ($true) {
-        Clear-Host
         $port = Get-Port
         Write-Host '=================================' -ForegroundColor Cyan
         Write-Host '  Winterbreak2 一键管理脚本' -ForegroundColor Cyan
         Write-Host '=================================' -ForegroundColor Cyan
         Write-Host "  当前端口：$port" -ForegroundColor Yellow
         Write-Host ''
-        Write-Host '  [1] 部署状态检查'
+        Write-Host '  [1] 自动部署（缺啥列出来，确认后再装）'
         Write-Host '  [2] 修改运行端口'
         Write-Host '  [3] 运行（前台启动，关闭窗口即关服务）'
         Write-Host '  [0] 退出'
@@ -300,7 +434,7 @@ if ($MyInvocation.InvocationName -eq $MyInvocation.MyCommand.Path -or
         $choice = Read-Host '请选择 [0-3]'
 
         switch ($choice) {
-            '1' { Show-Deploy }
+            '1' { Show-AutoDeploy }
             '2' { Change-Port }
             '3' { Start-Service; return }  # 启动服务后脚本退出
             '0' { Write-Host 'Bye!'; return }
