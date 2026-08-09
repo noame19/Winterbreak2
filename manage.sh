@@ -134,57 +134,49 @@ corepack_version() {
 # ---------- 菜单项 ----------
 
 # npm 智能修复（Node.js 存在但 npm 命令找不到时）
-# 常见原因：PowerShell 执行策略挡 .ps1 shim、npm-cli.js 缺失、多次重装残留
-# 4 级修复路径：检查 npm.cmd → 绕开 .ps1 直接调 npm.cmd → 检查 npm-cli.js → corepack --install-directory
+# 跨平台：先尝试 corepack 直接装 pnpm（绕过 npm），再提示用户如何修 npm
 repair_npm() {
     # 调用前 caller 已确认 node 存在、npm 缺失
     echo ""
     echo -e "${CYAN}诊断 npm 缺失原因...${NC}"
 
-    # Windows 上 npm.cmd 在 $env:ProgramFiles/nodejs/
-    # 其他平台 npm 由 Node 自带不会缺失
-    local npm_cmd_sh="$PROGRAMFILES/nodejs/npm.cmd"
-    local npm_cli_js="$PROGRAMFILES/nodejs/node_modules/npm/bin/npm-cli.js"
-
-    # 路径 1：检查 npm.cmd 是否真实存在
-    if [ ! -f "$npm_cmd_sh" ]; then
-        echo -e "  ${RED}✗${NC} npm.cmd 都不存在（$npm_cmd_sh 缺失）"
-        echo -e "       Node.js 安装损坏，需要重装"
+    # 用 node 自检 npm 模块是否真的安装了（不依赖 PATH 和 shim）
+    local npm_check
+    npm_check=$(node -e "try{require.resolve('npm/package.json');process.stdout.write('YES')}catch(e){process.stdout.write('NO')}" 2>/dev/null)
+    if [ "$npm_check" = "NO" ]; then
+        echo -e "  ${RED}✗${NC} npm 模块不在 node 安装目录里 —— Node.js 安装不完整"
         return 1
     fi
-    echo -e "  ${GREEN}✓${NC} npm.cmd 存在：$npm_cmd_sh"
+    echo -e "  ${GREEN}✓${NC} npm 模块在 Node.js 里（npm/package.json 可解析）"
 
-    # 路径 2：绕开 .ps1 shim 直接调 npm.cmd
-    local ver
-    ver=$("$npm_cmd_sh" --version 2>/dev/null)
-    if [ -n "$ver" ]; then
-        echo -e "  ${GREEN}✓${NC} 直接调 npm.cmd 可用（v$ver）—— 是 shell 把 npm.ps1 挡住了"
-        # Git Bash / macOS / Linux 都不会卡 .ps1，直接可用
-        if has_npm >/dev/null 2>&1; then
-            return 0
-        fi
-        # Windows + Git Bash 罕见情况：手动加 PATH
-        export PATH="$PROGRAMFILES/nodejs:$PATH"
-        if has_npm >/dev/null 2>&1; then
-            echo -e "       已把 $PROGRAMFILES/nodejs 加到 PATH"
-            return 0
-        fi
+    # 找 npm 的 bin 路径，把 node 安装目录加进 PATH
+    local node_bin
+    node_bin=$(node -e "console.log(path.dirname(process.execPath))" 2>/dev/null)
+    if [ -n "$node_bin" ] && [ -d "$node_bin" ]; then
+        case ":$PATH:" in
+            *":$node_bin:"*) ;;
+            *) export PATH="$node_bin:$PATH" ;;
+        esac
     fi
 
-    # 路径 3：检查 npm-cli.js（npm 真正的入口）
-    if [ ! -f "$npm_cli_js" ]; then
-        echo -e "  ${RED}✗${NC} npm-cli.js 也不存在 —— Node.js 安装彻底损坏"
-        echo -e "       需要用 winget / 重装 Node.js"
-        return 1
+    # 重新检测
+    if has_npm >/dev/null 2>&1; then
+        local v
+        v=$(npm --version 2>/dev/null)
+        echo -e "  ${GREEN}✓${NC} npm 现在可用了（v$v）—— 把 Node.js 目录加进 PATH 后能找到"
+        return 0
     fi
-    echo -e "  ${GREEN}✓${NC} npm-cli.js 存在"
 
-    # 路径 4：corepack --install-directory（不需要 admin，往用户目录写）
+    # 还找不到，corepack 兜底装 pnpm（绕过 npm）
     if has_corepack >/dev/null 2>&1; then
-        local install_dir="$LOCALAPPDATA/corepack"
+        local install_dir="$HOME/.local/share/corepack"
         echo -e "  ${CYAN}尝试 corepack --install-directory $install_dir ...${NC}"
         if corepack enable pnpm --install-directory "$install_dir" >/dev/null 2>&1; then
-            if command -v pnpm >/dev/null 2>&1; then
+            case ":$PATH:" in
+                *":$install_dir:"*) ;;
+                *) export PATH="$install_dir:$PATH" ;;
+            esac
+            if has_npm >/dev/null 2>&1 || command -v pnpm >/dev/null 2>&1; then
                 echo -e "  ${GREEN}✓${NC} pnpm 已通过 corepack 装到 $install_dir"
                 echo -e "       （不需要 npm，可以装项目依赖）"
                 return 0
@@ -194,7 +186,7 @@ repair_npm() {
         fi
     fi
 
-    echo -e "  ${RED}✗${NC} 所有自动修复路径都失败"
+    echo -e "  ${RED}✗${NC} npm 自动修复失败"
     return 1
 }
 
@@ -494,31 +486,52 @@ action_auto_deploy() {
             # 重新检测
             has_npm >/dev/null 2>&1 && needs_npm=false
         else
-            # 最后兜底：弹二次确认用 winget 重装 Node.js（仅 Windows）
-            if command -v winget >/dev/null 2>&1; then
-                echo ""
-                echo -e "  ${YELLOW}npm 自动修复失败，最后一招：用 winget 重装 Node.js（带 npm）${NC}"
-                echo -e "  ${GRAY}这会覆盖当前 Node.js 安装（同样版本号），全局 npm 包会保留${NC}"
-                read -rp "  确认重装 Node.js？(Y/n): " winget_confirm
-                if [ -n "$winget_confirm" ] && [[ ! "$winget_confirm" =~ ^[Yy]?$ ]]; then
-                    echo -e "  ${YELLOW}已跳过重装，请手动重装 Node.js：https://nodejs.org/${NC}"
-                else
-                    echo -e "  ${CYAN}正在用 winget 重装 Node.js（首次会弹 UAC 授权）...${NC}"
-                    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --force
-                    # 重装后 PATH 需要新开窗口才能刷新；用绝对路径测一下
-                    local node_exe="$PROGRAMFILES/nodejs/node.exe"
-                    if [ -f "$node_exe" ]; then
-                        local ver
-                        ver=$("$node_exe" --version 2>/dev/null)
-                        echo -e "  ${GREEN}Node.js 已重装（$ver）${NC}"
+            # 最后兜底：跨平台给出修复指引
+            echo ""
+            echo -e "  ${YELLOW}npm 自动修复失败，请按你系统的对应方法装 npm：${NC}"
+
+            # 检测平台（uname 不是 POSIX 标准，但 macOS/Linux/Git Bash 都有）
+            local os_name
+            os_name=$(uname -s 2>/dev/null || echo "Windows")
+
+            case "$os_name" in
+                Linux)
+                    if command -v apt >/dev/null 2>&1; then
+                        echo -e "    Debian/Ubuntu:  ${CYAN}sudo apt update && sudo apt install -y nodejs npm${NC}"
+                        echo -e "                    或用 NodeSource: ${CYAN}curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt install -y nodejs${NC}"
+                    elif command -v dnf >/dev/null 2>&1; then
+                        echo -e "    Fedora/RHEL:    ${CYAN}sudo dnf install -y nodejs npm${NC}"
+                    elif command -v yum >/dev/null 2>&1; then
+                        echo -e "    CentOS/RHEL:    ${CYAN}sudo yum install -y nodejs npm${NC}"
+                    elif command -v pacman >/dev/null 2>&1; then
+                        echo -e "    Arch Linux:     ${CYAN}sudo pacman -S nodejs npm${NC}"
+                    elif command -v zypper >/dev/null 2>&1; then
+                        echo -e "    openSUSE:       ${CYAN}sudo zypper install -y nodejs npm${NC}"
+                    else
+                        echo -e "    请用你的发行版包管理器装 npm，或重装 Node.js"
                     fi
-                    echo -e "  ${YELLOW}提示：winget 装完后需要重新打开 Git Bash / PowerShell 让 PATH 生效${NC}"
-                fi
-            else
-                echo ""
-                echo -e "  ${YELLOW}本机没有 winget，请手动重装 Node.js（选 LTS，自带 npm）：https://nodejs.org/${NC}"
-            fi
-            # 重装或不重装，统一让后续步骤尝试重连
+                    echo -e "    官方文档: ${BLUE}https://nodejs.org/en/download/package-manager/${NC}"
+                    ;;
+                Darwin)
+                    if command -v brew >/dev/null 2>&1; then
+                        echo -e "    macOS (Homebrew):  ${CYAN}brew install node${NC} （包含 npm）"
+                    else
+                        echo -e "    从官网下载安装包: ${BLUE}https://nodejs.org/${NC}"
+                    fi
+                    ;;
+                MINGW*|MSYS*|CYGWIN*)
+                    # Git Bash on Windows
+                    if command -v winget >/dev/null 2>&1; then
+                        echo -e "    Windows (winget):  ${CYAN}winget install --id OpenJS.NodeJS.LTS -e --force${NC}"
+                    else
+                        echo -e "    Windows: 从官网下载 LTS 安装包（自带 npm）: ${BLUE}https://nodejs.org/${NC}"
+                    fi
+                    ;;
+                *)
+                    echo -e "    请从官网下载 Node.js LTS: ${BLUE}https://nodejs.org/${NC}"
+                    ;;
+            esac
+
             needs_npm=false
         fi
         echo ""
