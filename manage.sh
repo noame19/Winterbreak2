@@ -63,62 +63,156 @@ press_enter() {
 
 # ---------- 菜单项 ----------
 
+# Node.js 缺失时的引导菜单（不自动装，符合"敏感动作要授权"原则）
+action_install_node() {
+    echo ""
+    echo -e "${YELLOW}Node.js 是运行本项目的必备环境。请选择安装方式：${NC}"
+    echo ""
+    echo "  [1] 打开 Node.js 官网下载页（https://nodejs.org/）"
+    if command -v winget >/dev/null 2>&1; then
+        echo "  [2] 用 winget 自动装（需要管理员权限，仅 Windows）"
+    fi
+    echo "  [0] 返回（我自己搞定）"
+    echo ""
+    read -rp "请选择 [0-2]: " choice
+
+    case "$choice" in
+        1)
+            if command -v xdg-open >/dev/null 2>&1; then
+                xdg-open "https://nodejs.org/" >/dev/null 2>&1
+            elif command -v open >/dev/null 2>&1; then
+                open "https://nodejs.org/" >/dev/null 2>&1
+            elif command -v start >/dev/null 2>&1; then
+                start "" "https://nodejs.org/" >/dev/null 2>&1
+            else
+                echo -e "${RED}找不到浏览器启动命令${NC}"
+                echo -e "请手动打开：${BLUE}https://nodejs.org/${NC}"
+                return
+            fi
+            echo -e "${GREEN}已在默认浏览器打开下载页${NC}"
+            ;;
+        2)
+            if command -v winget >/dev/null 2>&1; then
+                echo -e "${CYAN}正在用 winget 安装 Node.js LTS（首次运行会弹 UAC 授权）...${NC}"
+                winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+                echo ""
+                echo -e "${YELLOW}提示：winget 装完后需要重新打开 Git Bash / PowerShell 让 PATH 生效${NC}"
+                echo -e "      装好后回到本菜单再按一次 [1] 即可继续部署${NC}"
+            else
+                echo -e "${RED}本机没有 winget（Windows 10 旧版 / macOS / Linux 都没有）${NC}"
+                echo -e "请手动下载安装：${BLUE}https://nodejs.org/${NC}"
+            fi
+            ;;
+        0|"")
+            echo -e "${YELLOW}已跳过 Node.js 安装${NC}"
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            ;;
+    esac
+}
+
 action_deploy() {
     clear
-    echo -e "${CYAN}===== 部署状态检查 =====${NC}"
+    echo -e "${CYAN}===== 自动部署 + 状态检查 =====${NC}"
     echo ""
 
-    # 1. Node.js
+    # 1. Node.js —— 不自动装，缺失时弹菜单引导
     if command -v node >/dev/null 2>&1; then
         local node_v
         node_v=$(node --version)
         echo -e "  ${GREEN}✓${NC} Node.js       $node_v"
     else
-        echo -e "  ${RED}✗${NC} Node.js       未安装（请先到 https://nodejs.org 下载）"
+        echo -e "  ${RED}✗${NC} Node.js       未安装"
+        action_install_node
+        if command -v node >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} Node.js       $(node --version)（已安装）"
+        else
+            echo -e "  ${YELLOW}!${NC} Node.js       仍缺失（后续步骤跳过 node 相关检查）"
+        fi
     fi
 
-    # 2. 依赖
-    if [ -d "node_modules" ]; then
-        local expr_v
-        expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
-        echo -e "  ${GREEN}✓${NC} express       $expr_v"
+    # 只有装了 node 才继续检查依赖
+    if command -v node >/dev/null 2>&1; then
+        # 2. pnpm —— 缺失时自动用 npm 装（轻量、安全）
+        if command -v pnpm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} pnpm          $(pnpm --version)"
+        else
+            echo -e "  ${YELLOW}!${NC} pnpm          未安装，尝试用 npm 自动装..."
+            if command -v npm >/dev/null 2>&1; then
+                if npm install -g pnpm >/dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} pnpm          已自动安装 $(pnpm --version)"
+                else
+                    echo -e "  ${RED}✗${NC} pnpm          自动安装失败（请手动 npm install -g pnpm）"
+                fi
+            else
+                echo -e "  ${RED}✗${NC} pnpm          npm 也不存在，无法自动装"
+            fi
+        fi
+
+        # 3. 项目依赖（express）—— 缺失时自动装
+        if [ -d "node_modules" ] && [ -f "node_modules/express/package.json" ]; then
+            local expr_v
+            expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+            echo -e "  ${GREEN}✓${NC} express       $expr_v"
+        else
+            echo -e "  ${YELLOW}!${NC} express       未安装，尝试自动安装..."
+            if command -v pnpm >/dev/null 2>&1; then
+                if pnpm install >/dev/null 2>&1; then
+                    expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+                    echo -e "  ${GREEN}✓${NC} express       已自动安装 ($expr_v)"
+                else
+                    echo -e "  ${RED}✗${NC} express       pnpm install 失败"
+                fi
+            elif command -v npm >/dev/null 2>&1; then
+                if npm install >/dev/null 2>&1; then
+                    expr_v=$(node -p "try{require('express/package.json').version}catch(e){'未安装'}" 2>/dev/null || echo "未安装")
+                    echo -e "  ${GREEN}✓${NC} express       已自动安装 (用 npm, $expr_v)"
+                else
+                    echo -e "  ${RED}✗${NC} express       npm install 失败"
+                fi
+            else
+                echo -e "  ${RED}✗${NC} express       无包管理器可用"
+            fi
+        fi
     else
-        echo -e "  ${RED}✗${NC} express       未安装（请运行 pnpm install 或 npm install）"
+        echo -e "  ${GRAY}-${NC} pnpm          （跳过：Node.js 缺失）"
+        echo -e "  ${GRAY}-${NC} express       （跳过：Node.js 缺失）"
     fi
 
-    # 3. 入口文件
+    # 4. 入口文件 —— 不能自动修
     if [ -f "api/index.js" ]; then
         echo -e "  ${GREEN}✓${NC} 入口文件      api/index.js"
     else
-        echo -e "  ${RED}✗${NC} 入口文件      缺失"
+        echo -e "  ${RED}✗${NC} 入口文件      缺失（请 git pull 或重新 fork）"
     fi
 
-    # 4. 资源目录
+    # 5. 资源目录
     if [ -d "assets" ]; then
         local mobi_size
         mobi_size=$(stat -c '%s' "assets/placeholder.mobi" 2>/dev/null || stat -f '%z' "assets/placeholder.mobi" 2>/dev/null || echo "?")
         echo -e "  ${GREEN}✓${NC} 资源目录      assets/ (placeholder.mobi = ${mobi_size} 字节)"
     else
-        echo -e "  ${RED}✗${NC} 资源目录      缺失"
+        echo -e "  ${RED}✗${NC} 资源目录      缺失（请 git pull 或重新 fork）"
     fi
 
-    # 5. 端口信息
+    # 6. 端口信息
     local port
     port=$(get_port)
     echo -e "  ${GRAY}i${NC}  当前端口      ${YELLOW}$port${NC}"
 
-    # 6. 端口可用性
+    # 7. 端口可用性
     if is_port_free "$port"; then
         echo -e "  ${GREEN}✓${NC} 端口空闲      $port 可绑定"
     else
         echo -e "  ${RED}✗${NC} 端口被占用    $port 已被其他程序占用（请用 [2] 改端口）"
     fi
 
-    # 7. .env 状态
+    # 8. .env 状态
     if [ -f "$ENV_FILE" ]; then
         echo -e "  ${GRAY}i${NC}  端口配置      ${BLUE}$ENV_FILE${NC}（已存在）"
     else
-        echo -e "  ${GRAY}i${NC}  端口配置      ${BLUE}$ENV_FILE${NC}（未创建，运行时会用默认 $DEFAULT_PORT）"
+        echo -e "  ${GRAY}i${NC}  端口配置      ${BLUE}$ENV_FILE${NC}（未创建，运行时用默认 $DEFAULT_PORT）"
     fi
 
     echo ""
