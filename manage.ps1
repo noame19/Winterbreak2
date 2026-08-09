@@ -47,6 +47,20 @@ function Test-PortFree {
     }
 }
 
+function Get-LocalIPs {
+    # 列出本机所有非 loopback、非 link-local 的 IPv4 地址
+    # 排除：127.0.0.1（loopback）、169.254.x.x（APIPA，未分配到 DHCP 的虚拟网卡）、
+    #       Hyper-V/VMware/Docker/WSL 等虚拟接口
+    Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $ip = $_.IPAddress.ToString()
+            $ip -ne '127.0.0.1' -and
+            -not $ip.StartsWith('169.254.') -and
+            $_.InterfaceAlias -notmatch 'Loopback|Hyper-V|VMware|Docker|WSL|vEthernet|Loopback Pseudo-Interface'
+        } |
+        ForEach-Object { $_.IPAddress.ToString() }
+}
+
 # ---------- 菜单项 ----------
 
 # Node.js 缺失时的引导菜单（不自动装，符合"敏感动作要授权"原则）
@@ -147,11 +161,11 @@ function Show-Status {
     }
 
     # 6. 端口
-    $port = Get-Port
-    Write-Host "  [i]  当前端口      $port" -ForegroundColor Gray
-    if (Test-PortFree $port) {
+    if (Test-PortFree (Get-Port)) {
+        $port = Get-Port
         Write-Host "  [OK] 端口空闲      $port 可绑定" -ForegroundColor Green
     } else {
+        $port = Get-Port
         Write-Host "  [X]  端口被占用    $port 已被其他程序占用" -ForegroundColor Red
     }
 
@@ -344,6 +358,49 @@ function Show-AutoDeploy {
     Read-Host '按 Enter 键返回菜单'
 }
 
+function Show-Uninstall {
+    Clear-Host
+    Write-Host '===== 卸载指南 =====' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '本项目用完即丢，依赖（express 等 67 个包）全部装在 node_modules 里。' -ForegroundColor Gray
+    Write-Host '删项目文件夹就能清掉项目依赖，Node.js 和 pnpm 不受任何影响。' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '按需选择要执行的步骤（步骤 1 是必须的，2-4 是可选）：' -ForegroundColor Yellow
+    Write-Host ''
+
+    Write-Host '  1) 删除项目文件夹（必做）' -ForegroundColor White
+    Write-Host '       项目依赖（express 等）会一起清掉' -ForegroundColor Gray
+    Write-Host "       本项目路径：$ScriptDir" -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '       PowerShell:' -ForegroundColor Gray
+    Write-Host "         Remove-Item -Recurse -Force `"$ScriptDir`"" -ForegroundColor Cyan
+    Write-Host '       cmd:' -ForegroundColor Gray
+    Write-Host "         rmdir /s /q `"$ScriptDir`"" -ForegroundColor Cyan
+    Write-Host '       Mac/Linux (bash):' -ForegroundColor Gray
+    Write-Host "         rm -rf `"$ScriptDir`"" -ForegroundColor Cyan
+    Write-Host ''
+
+    Write-Host '  2) （可选）清理 pnpm 全局缓存' -ForegroundColor White
+    Write-Host '       pnpm store prune' -ForegroundColor Cyan
+    Write-Host "       （如不需要 pnpm 可跳过，电脑里若有其他 pnpm 项目则不要执行）" -ForegroundColor Gray
+    Write-Host ''
+
+    Write-Host '  3) （可选）卸 pnpm 本身' -ForegroundColor White
+    Write-Host '       npm uninstall -g pnpm' -ForegroundColor Cyan
+    Write-Host ''
+
+    Write-Host '  4) （可选）卸 Node.js 本身' -ForegroundColor White
+    Write-Host '       Windows: 控制面板 → 程序 → 卸载 Node.js' -ForegroundColor Gray
+    Write-Host '       Mac:    brew uninstall node   或   官网卸载工具' -ForegroundColor Gray
+    Write-Host '       Linux:  sudo apt remove nodejs   (按你的发行版)' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '  ⚠ 步骤 3 和 4 只在电脑不再需要 Node.js / pnpm 时才做' -ForegroundColor Yellow
+    Write-Host '     否则会破坏其他 Node.js 项目的开发环境' -ForegroundColor Yellow
+    Write-Host ''
+
+    Read-Host '按 Enter 键返回菜单'
+}
+
 function Change-Port {
     Clear-Host
     Write-Host '===== 修改运行端口 =====' -ForegroundColor Cyan
@@ -394,7 +451,21 @@ function Start-Service {
     Write-Host '===== 启动服务 =====' -ForegroundColor Cyan
     Write-Host ''
     Write-Host "  监听地址：http://0.0.0.0:$port" -ForegroundColor Blue
-    Write-Host "  访问方式：浏览器打开 http://localhost:$port/" -ForegroundColor Gray
+
+    # 列出本机所有非 loopback 的 IPv4 地址（Kindle 用内网 IP 访问）
+    $ips = @(Get-LocalIPs)
+    if ($ips.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  Kindle 访问：浏览器打开以下任一地址' -ForegroundColor Cyan
+        foreach ($ip in $ips) {
+            Write-Host "     http://${ip}:$port" -ForegroundColor Cyan
+        }
+    } else {
+        Write-Host ''
+        Write-Host '  ⚠ 未检测到内网 IP，请手动运行 ipconfig 查看' -ForegroundColor Yellow
+    }
+
+    Write-Host ''
     Write-Host '  关闭行为：关闭此窗口 / Ctrl+C = 关闭服务' -ForegroundColor Yellow
     Write-Host ''
     Write-Host '3 秒后启动...（按 Ctrl+C 取消）' -ForegroundColor Gray
@@ -416,27 +487,32 @@ function Start-Service {
 
 if ($MyInvocation.InvocationName -eq $MyInvocation.MyCommand.Path -or
     $MyInvocation.InvocationName -eq '&') {
+    # 启动时显示一次标题
+    Write-Host '=================================' -ForegroundColor Cyan
+    Write-Host '  Winterbreak2 一键管理部署脚本' -ForegroundColor Cyan
+    Write-Host '=================================' -ForegroundColor Cyan
+    Write-Host ''
+
     # 启动时自动跑一次状态检查（只读、不阻塞）
     Show-Status
 
     while ($true) {
         $port = Get-Port
-        Write-Host '=================================' -ForegroundColor Cyan
-        Write-Host '  Winterbreak2 一键管理脚本' -ForegroundColor Cyan
-        Write-Host '=================================' -ForegroundColor Cyan
         Write-Host "  当前端口：$port" -ForegroundColor Yellow
         Write-Host ''
-        Write-Host '  [1] 自动部署（缺啥列出来，确认后再装）'
+        Write-Host '  [1] 自动部署'
         Write-Host '  [2] 修改运行端口'
-        Write-Host '  [3] 运行（前台启动，关闭窗口即关服务）'
+        Write-Host '  [3] 本机运行网页'
+        Write-Host '  [4] 卸载指南'
         Write-Host '  [0] 退出'
         Write-Host ''
-        $choice = Read-Host '请选择 [0-3]'
+        $choice = Read-Host '请选择 [0-4]'
 
         switch ($choice) {
             '1' { Show-AutoDeploy }
             '2' { Change-Port }
             '3' { Start-Service; return }  # 启动服务后脚本退出
+            '4' { Show-Uninstall }
             '0' { Write-Host 'Bye!'; return }
             default { Write-Host '无效选择' -ForegroundColor Red; Start-Sleep -Seconds 1 }
         }

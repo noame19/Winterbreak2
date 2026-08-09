@@ -56,6 +56,18 @@ is_port_free() {
     " 2>/dev/null
 }
 
+# 列出本机所有非 loopback、非 link-local 的 IPv4 地址
+# 排除：127.0.0.1（loopback）、169.254.x.x（APIPA link-local，未分配到 DHCP 的虚拟网卡）
+get_local_ips() {
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 addr show 2>/dev/null | grep -oP 'inet \K[\d.]+' \
+            | grep -v '^127\.' | grep -v '^169\.254\.'
+    elif command -v ifconfig >/dev/null 2>&1; then
+        ifconfig 2>/dev/null | grep -oP 'inet (?:addr:)?\K[\d.]+' \
+            | grep -v '^127\.' | grep -v '^169\.254\.'
+    fi
+}
+
 press_enter() {
     echo ""
     read -rp "按 Enter 键返回菜单..." _
@@ -395,7 +407,21 @@ action_run() {
     echo -e "${CYAN}===== 启动服务 =====${NC}"
     echo ""
     echo -e "  监听地址：${BLUE}http://0.0.0.0:$port${NC}"
-    echo -e "  访问方式：${GRAY}浏览器打开 http://localhost:$port/${NC}"
+    echo ""
+
+    # 列出本机所有非 loopback、非 link-local 的 IPv4 地址（Kindle 用内网 IP 访问）
+    local ips
+    ips=$(get_local_ips)
+    if [ -n "$ips" ]; then
+        echo -e "  Kindle 访问：浏览器打开以下任一地址"
+        for ip in $ips; do
+            echo -e "     ${CYAN}http://${ip}:${port}${NC}"
+        done
+    else
+        echo -e "  ${YELLOW}⚠ 未检测到内网 IP，请手动运行 ipconfig 查看${NC}"
+    fi
+
+    echo ""
     echo -e "  关闭行为：${YELLOW}关闭此窗口 / Ctrl+C = 关闭服务${NC}"
     echo ""
     echo -e "${GRAY}3 秒后启动...（按 Ctrl+C 取消）${NC}"
@@ -413,6 +439,50 @@ action_run() {
     exec node api/index.js
 }
 
+action_uninstall() {
+    clear
+    echo -e "${CYAN}===== 卸载指南 =====${NC}"
+    echo ""
+    echo -e "${GRAY}本项目用完即丢，依赖（express 等 67 个包）全部装在 node_modules 里。${NC}"
+    echo -e "${GRAY}删项目文件夹就能清掉项目依赖，Node.js 和 pnpm 不受任何影响。${NC}"
+    echo ""
+    echo -e "${YELLOW}按需选择要执行的步骤（步骤 1 是必须的，2-4 是可选）：${NC}"
+    echo ""
+    echo -e "  1) 删除项目文件夹（必做）"
+    echo -e "       项目依赖（express 等）会一起清掉"
+    echo -e "       ${GRAY}本项目路径：$(pwd)${NC}"
+    echo ""
+    echo -e "       PowerShell:"
+    echo -e "         ${CYAN}Remove-Item -Recurse -Force \"$(pwd)\"${NC}"
+    echo -e "       cmd:"
+    echo -e "         ${CYAN}rmdir /s /q \"$(pwd)\"${NC}"
+    echo -e "       Mac/Linux (bash):"
+    echo -e "         ${CYAN}rm -rf \"$(pwd)\"${NC}"
+    echo ""
+    echo -e "  2) （可选）清理 pnpm 全局缓存"
+    echo -e "       ${CYAN}pnpm store prune${NC}"
+    echo -e "       ${GRAY}（如不需要 pnpm 可跳过，电脑里若有其他 pnpm 项目则不要执行）${NC}"
+    echo ""
+    echo -e "  3) （可选）卸 pnpm 本身"
+    echo -e "       ${CYAN}npm uninstall -g pnpm${NC}"
+    echo ""
+    echo -e "  4) （可选）卸 Node.js 本身"
+    echo -e "       ${GRAY}Windows: 控制面板 → 程序 → 卸载 Node.js${NC}"
+    echo -e "       ${GRAY}Mac:    brew uninstall node   或   官网卸载工具${NC}"
+    echo -e "       ${GRAY}Linux:  sudo apt remove nodejs   (按你的发行版)${NC}"
+    echo ""
+    echo -e "  ${YELLOW}⚠ 步骤 3 和 4 只在电脑不再需要 Node.js / pnpm 时才做${NC}"
+    echo -e "     ${YELLOW}否则会破坏其他 Node.js 项目的开发环境${NC}"
+    echo ""
+    press_enter
+}
+
+# ---------- 启动时显示一次标题 ----------
+echo -e "${CYAN}=================================${NC}"
+echo -e "${CYAN}  Winterbreak2 一键管理部署脚本${NC}"
+echo -e "${CYAN}=================================${NC}"
+echo ""
+
 # ---------- 启动时自动跑一次状态检查（只读、不阻塞） ----------
 action_status
 
@@ -420,22 +490,21 @@ action_status
 
 while true; do
     port=$(get_port)
-    echo -e "${CYAN}=================================${NC}"
-    echo -e "${CYAN}  Winterbreak2 一键管理脚本${NC}"
-    echo -e "${CYAN}=================================${NC}"
     echo -e "  当前端口：${YELLOW}$port${NC}"
     echo ""
-    echo "  [1] 自动部署（缺啥列出来，确认后再装）"
+    echo "  [1] 自动部署"
     echo "  [2] 修改运行端口"
-    echo "  [3] 运行（前台启动，关闭窗口即关服务）"
+    echo "  [3] 本机运行网页"
+    echo "  [4] 卸载指南"
     echo "  [0] 退出"
     echo ""
-    read -rp "请选择 [0-3]: " choice
+    read -rp "请选择 [0-4]: " choice
 
     case "$choice" in
         1) action_auto_deploy ;;
         2) action_change_port ;;
         3) action_run ;;
+        4) action_uninstall ;;
         0) echo "Bye!"; exit 0 ;;
         *) echo -e "${RED}无效选择${NC}"; sleep 1 ;;
     esac
