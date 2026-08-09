@@ -61,6 +61,23 @@ function Get-LocalIPs {
         ForEach-Object { $_.IPAddress.ToString() }
 }
 
+# 跨平台 npm 检测（PS 默认能找 npm.ps1 / npm.cmd，但路径乱时 fallback）
+function Test-NpmAvailable {
+    if (Get-Command npm -ErrorAction SilentlyContinue) { return $true }
+    if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { return $true }
+    # 用 Get-Command -All 查全部，找不到再 fallback
+    $all = Get-Command npm -All -ErrorAction SilentlyContinue
+    if ($all) { return $true }
+    return $false
+}
+
+# 同上，corepack 检测
+function Test-CorepackAvailable {
+    if (Get-Command corepack -ErrorAction SilentlyContinue) { return $true }
+    if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
 # ---------- 菜单项 ----------
 
 # npm 智能修复（Node.js 存在但 npm 命令找不到时）

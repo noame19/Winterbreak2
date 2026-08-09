@@ -73,6 +73,64 @@ press_enter() {
     read -rp "按 Enter 键返回菜单..." _
 }
 
+# 跨平台 npm 检测（Git Bash on Windows 上 npm 是 bash 脚本，不是 .exe，
+# command -v 在 PATH 没显式加 nodejs 目录时会找不到）
+has_npm() {
+    if has_npm >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v npm.cmd >/dev/null 2>&1; then
+        return 0
+    fi
+    # Git Bash on Windows：用 where.exe 反查所有 npm 所在目录，全加进 PATH
+    if command -v where.exe >/dev/null 2>&1; then
+        local npm_dirs
+        npm_dirs=$(where.exe npm 2>/dev/null | xargs -I{} dirname {} 2>/dev/null | sort -u)
+        if [ -n "$npm_dirs" ]; then
+            export PATH="$npm_dirs:$PATH"
+            if has_npm >/dev/null 2>&1 || command -v npm.cmd >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# 同上，corepack 检测
+has_corepack() {
+    if has_corepack >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v corepack.cmd >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v where.exe >/dev/null 2>&1; then
+        local cp_dirs
+        cp_dirs=$(where.exe corepack 2>/dev/null | xargs -I{} dirname {} 2>/dev/null | sort -u)
+        if [ -n "$cp_dirs" ]; then
+            export PATH="$cp_dirs:$PATH"
+            if has_corepack >/dev/null 2>&1 || command -v corepack.cmd >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# 拿 npm 版本字符串（用于显示）
+npm_version() {
+    if has_npm; then
+        npm --version 2>/dev/null
+    fi
+}
+
+# 拿 corepack 版本字符串
+corepack_version() {
+    if has_corepack; then
+        corepack --version 2>/dev/null
+    fi
+}
+
 # ---------- 菜单项 ----------
 
 # npm 智能修复（Node.js 存在但 npm 命令找不到时）
@@ -102,12 +160,12 @@ repair_npm() {
     if [ -n "$ver" ]; then
         echo -e "  ${GREEN}✓${NC} 直接调 npm.cmd 可用（v$ver）—— 是 shell 把 npm.ps1 挡住了"
         # Git Bash / macOS / Linux 都不会卡 .ps1，直接可用
-        if command -v npm >/dev/null 2>&1; then
+        if has_npm >/dev/null 2>&1; then
             return 0
         fi
         # Windows + Git Bash 罕见情况：手动加 PATH
         export PATH="$PROGRAMFILES/nodejs:$PATH"
-        if command -v npm >/dev/null 2>&1; then
+        if has_npm >/dev/null 2>&1; then
             echo -e "       已把 $PROGRAMFILES/nodejs 加到 PATH"
             return 0
         fi
@@ -122,7 +180,7 @@ repair_npm() {
     echo -e "  ${GREEN}✓${NC} npm-cli.js 存在"
 
     # 路径 4：corepack --install-directory（不需要 admin，往用户目录写）
-    if command -v corepack >/dev/null 2>&1; then
+    if has_corepack >/dev/null 2>&1; then
         local install_dir="$LOCALAPPDATA/corepack"
         echo -e "  ${CYAN}尝试 corepack --install-directory $install_dir ...${NC}"
         if corepack enable pnpm --install-directory "$install_dir" >/dev/null 2>&1; then
@@ -205,8 +263,8 @@ action_status() {
 
     # 2. npm（Node.js 通常自带，但部分安装方式可能缺失 npm）
     if command -v node >/dev/null 2>&1; then
-        if command -v npm >/dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} npm           $(npm --version)"
+        if has_npm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} npm           $(npm_version)"
         else
             echo -e "  ${YELLOW}!${NC} npm           未安装（Node.js 存在但 npm 缺失，装包会走 corepack 兜底）"
         fi
@@ -216,7 +274,7 @@ action_status() {
 
     # 3. corepack（Node 16.9+ 内置，不依赖 npm 也能装 pnpm）
     if command -v node >/dev/null 2>&1; then
-        if command -v corepack >/dev/null 2>&1; then
+        if has_corepack >/dev/null 2>&1; then
             echo -e "  ${GRAY}i${NC}  corepack      已可用（兜底包管理器安装）"
         else
             echo -e "  ${GRAY}i${NC}  corepack      不可用（Node 版本过低或 corepack 被禁用，装 pnpm 需用 npm）"
@@ -311,15 +369,15 @@ action_auto_deploy() {
     # 2. npm + corepack + pnpm + express
     if [ "$needs_node" = false ]; then
         # npm（Node.js 通常自带，但可能缺失）
-        if command -v npm >/dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} npm           $(npm --version)"
+        if has_npm >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} npm           $(npm_version)"
         else
             echo -e "  ${YELLOW}!${NC} npm           未安装（Node.js 存在但 npm 缺失）"
             needs_npm=true
         fi
 
         # corepack（Node 16.9+ 内置）
-        if command -v corepack >/dev/null 2>&1; then
+        if has_corepack >/dev/null 2>&1; then
             has_corepack=true
         fi
 
@@ -385,7 +443,7 @@ action_auto_deploy() {
     if [ "$needs_pnpm" = true ]; then
         if [ "$has_corepack" = true ]; then
             echo -e "  ${YELLOW}•${NC} pnpm     → 自动 corepack prepare pnpm@latest --activate"
-        elif command -v npm >/dev/null 2>&1; then
+        elif has_npm >/dev/null 2>&1; then
             echo -e "  ${YELLOW}•${NC} pnpm     → 自动 npm install -g pnpm"
         else
             echo -e "  ${RED}•${NC} pnpm     → 无法自动装（缺 corepack 也缺 npm），需手动装 Node.js"
@@ -419,8 +477,8 @@ action_auto_deploy() {
         if command -v node >/dev/null 2>&1; then
             echo -e "${GREEN}✓ Node.js 已可用 ($(node --version))${NC}"
             # 重新检测 npm 和 corepack（Node 装完后可能有了）
-            command -v npm >/dev/null 2>&1 && needs_npm=false || needs_npm=true
-            command -v corepack >/dev/null 2>&1 && has_corepack=true
+            has_npm >/dev/null 2>&1 && needs_npm=false || needs_npm=true
+            has_corepack >/dev/null 2>&1 && has_corepack=true
         else
             echo -e "${YELLOW}! Node.js 仍未安装，停止后续步骤${NC}"
             press_enter
@@ -434,7 +492,7 @@ action_auto_deploy() {
         echo -e "${CYAN}--- 步骤 1.5: 智能修复 npm ---${NC}"
         if repair_npm; then
             # 重新检测
-            command -v npm >/dev/null 2>&1 && needs_npm=false
+            has_npm >/dev/null 2>&1 && needs_npm=false
         else
             # 最后兜底：弹二次确认用 winget 重装 Node.js（仅 Windows）
             if command -v winget >/dev/null 2>&1; then
@@ -472,7 +530,7 @@ action_auto_deploy() {
         local pnpm_installed=false
 
         # 路径 A：corepack（Node 16.9+ 内置，不依赖 npm）
-        if command -v corepack >/dev/null 2>&1; then
+        if has_corepack >/dev/null 2>&1; then
             echo -e "${GRAY}  尝试 corepack 安装...${NC}"
             if corepack prepare pnpm@latest --activate >/dev/null 2>&1; then
                 if command -v pnpm >/dev/null 2>&1; then
@@ -486,7 +544,7 @@ action_auto_deploy() {
 
         # 路径 B：npm（传统方式，需要 npm）
         if [ "$pnpm_installed" = false ]; then
-            if command -v npm >/dev/null 2>&1; then
+            if has_npm >/dev/null 2>&1; then
                 echo -e "${GRAY}  尝试 npm 安装...${NC}"
                 local npm_err
                 npm_err=$(npm install -g pnpm 2>&1) || true
@@ -531,7 +589,7 @@ action_auto_deploy() {
             fi
         fi
 
-        if [ "$express_installed" = false ] && command -v npm >/dev/null 2>&1; then
+        if [ "$express_installed" = false ] && has_npm >/dev/null 2>&1; then
             echo -e "${GRAY}  尝试 npm install...${NC}"
             if npm install >/dev/null 2>&1; then
                 local expr_v
@@ -637,11 +695,11 @@ action_run() {
             pnpm install >/dev/null 2>&1 && installed=true
             [ "$installed" = true ] && echo -e "${GREEN}已通过 pnpm 安装依赖${NC}"
         fi
-        if [ "$installed" = false ] && command -v npm >/dev/null 2>&1; then
+        if [ "$installed" = false ] && has_npm >/dev/null 2>&1; then
             npm install >/dev/null 2>&1 && installed=true
             [ "$installed" = true ] && echo -e "${GREEN}已通过 npm 安装依赖${NC}"
         fi
-        if [ "$installed" = false ] && command -v corepack >/dev/null 2>&1; then
+        if [ "$installed" = false ] && has_corepack >/dev/null 2>&1; then
             corepack prepare pnpm@latest --activate >/dev/null 2>&1 && \
             pnpm install >/dev/null 2>&1 && installed=true
             [ "$installed" = true ] && echo -e "${GREEN}已通过 corepack→pnpm 安装依赖${NC}"
